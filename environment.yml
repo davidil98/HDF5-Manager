@@ -1,0 +1,12 @@
+name: hdf5_manager
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - nicegui
+  - h5py
+  - pandas
+  - openpyxl
+  - numpy
+  - pytest
