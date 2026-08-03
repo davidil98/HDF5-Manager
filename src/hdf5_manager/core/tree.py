@@ -7,6 +7,7 @@ The tree uses a dict format compatible with NiceGUI's ``ui.tree``:
         "label": "group_name",
         "children": [...],
         "type": "group" | "dataset",
+        "attributes": {attribute_name: value},
         "shape": "(100, 3)",
         "dtype": "float64",
     }
@@ -42,6 +43,7 @@ def _walk_group(group: h5py.Group) -> list[dict[str, Any]]:
                 "label": name,
                 "children": _walk_group(item),
                 "type": "group",
+                "attributes": dict(item.attrs) if item.attrs else {},
                 "shape": "",
                 "dtype": "",
             }
