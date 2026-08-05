@@ -16,6 +16,9 @@ hdf5-manager = "hdf5_manager:main"
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "mypy"]
+# GUI extras: pull pywebview + a Qt backend for native mode
+# (uvicorn/nicegui works without these — only needed for native=True)
+gui = ["pywebview[qt]"]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

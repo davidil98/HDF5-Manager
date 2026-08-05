@@ -17,10 +17,12 @@ A standalone desktop tool for viewing, editing, merging, and exporting
 
 ## Installation
 
-### pip (PyPI)
+### From source (development)
 
 ```bash
-pip install hdf5-manager
+git clone https://github.com/davidil98/HDF5-Manager.git
+cd HDF5-Manager
+pip install -e ".[dev]"
 ```
 
 ### conda
@@ -30,28 +32,62 @@ conda env create -f environment.yml
 conda activate hdf5_manager
 ```
 
+### From PyPI (when published)
+
+```bash
+pip install hdf5-manager
+```
+
 ## Usage
 
-### Standalone desktop app
+### Development
 
 ```bash
-hdf5-manager
+python main.py        # Hot-reload, browser mode
+hdf5-manager          # No reload, browser mode (from console script)
 ```
 
-Or run directly:
+Both commands work in browser mode (default for development).
+`python main.py` enables hot-reload — saving any `.py` reloads the page.
 
-```bash
-python main.py
-```
+### End-user distribution
 
-### Windows users with conda
+Windows users with conda, double-click `run.bat` or from Anaconda Prompt:
 
-Double-click `run.bat`, or from Anaconda Prompt:
-
-```bash
+```batch
 conda activate hdf5_manager
 hdf5-manager
 ```
+
+Linux/macOS users with conda:
+
+```bash
+./run.sh
+```
+
+For native mode (desktop window instead of browser), install the GUI
+extras first:
+
+```bash
+pip install -e ".[gui]"      # pip users
+# or, already covered by environment.yml for conda users (pywebview[qt])
+```
+
+Then launch with native mode (edit `__init__.py` to set `native=True`
+or pass it explicitly).
+
+Or build a standalone `.exe` for distribution:
+
+```bash
+nicegui-pack --onefile --name "HDF5-Manager" main.py
+```
+
+> **Linux note:** native mode is **fully working on Fedora** (tested
+> with PyQt6-WebEngine). Ubuntu/Debian users may have a smoother
+> experience because `apt` provides `libwebkit2gtk` and `python3-gi`
+> packages out of the box, so the GTK backend of pywebview is usable
+> without extra steps. On Fedora, pywebview falls through to Qt6
+> because the system ships Gtk 4 only. See `AGENTS.md` for details.
 
 ## Development
 
@@ -59,7 +95,7 @@ hdf5-manager
 pip install -e ".[dev]"
 pytest
 ruff check src/ tests/
-ruff format src/ tests/
+ruff format src/ tests/   # optional auto-formatting
 mypy src/
 ```
 
@@ -74,6 +110,14 @@ hdf5_manager/
 
 `core/` is framework-agnostic and testable with pytest. Both frontends import
 from core, never the reverse.
+
+### Entry points
+
+| Command              | File                        | reload | native |
+|----------------------|-----------------------------|--------|--------|
+| `python main.py`     | `main.py`                   | True   | False  |
+| `hdf5-manager`       | `src/hdf5_manager/__init__.py` | False  | False  |
+| `run.bat` / `run.sh` | (user scripts)              | False  | True   |
 
 ## Distribution
 

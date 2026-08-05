@@ -53,6 +53,7 @@ def _build_toolbar() -> None:
 
         if files:
             app.storage.user["h5_path"] = files[0]
+            create_viewer_tab.refresh()
 
     with ui.row().classes("w-full items-center gap-2 p-2"):
         ui.button("Open File", icon="folder_open", on_click=_pick_file)
@@ -81,27 +82,3 @@ def _build_tabs() -> None:
         with ui.tab_panel("export"):
             create_exporter_tab()
 
-
-def run() -> None:
-    """Launch the standalone NiceGUI application."""
-    import sys
-
-    # Native mode needs freeze_support on Windows when packaged.
-    # Debe ser la PRIMERA llamada en el proceso principal.
-    if sys.platform == "win32":
-        from multiprocessing import freeze_support
-
-        freeze_support()
-
-    ui.run(
-        title="HDF5 Manager",
-        favicon="📊",
-        native=False,
-        #window_size=(1200, 800),
-        reload=True,
-        storage_secret="hdf5-manager-secret",
-    )
-
-
-if __name__ in {"__main__", "__mp_main__"}:
-    run()

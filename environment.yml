@@ -10,3 +10,6 @@ dependencies:
   - openpyxl
   - numpy
   - pytest
+  - pygobject
+  - pip:
+    - "pywebview[qt]"
