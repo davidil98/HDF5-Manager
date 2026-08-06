@@ -67,11 +67,7 @@ def _build_tree_panel(path: str) -> ui.tree:
     """
     ui.label("Structure").classes("text-subtitle2 p-2 pb-0")
 
-    # TODO: replace this with real data once you finish the review.
-    # Hint: use h5py.File(path, 'r') as a context manager, call
-    # build_tree(f), and pass the result to ui.tree(). The "with"
-    # block guarantees the file handle is closed even if building
-    # the tree raises.
+    # Build tree
     tree_data: list[dict] = []
     if os.path.isfile(path):
         with h5py.File(path, "r") as f:
