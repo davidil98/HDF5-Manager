@@ -49,7 +49,7 @@ def _build_toolbar() -> None:
             # '~' es el home del usuario como directorio inicial.
             # La llamada devuelve una lista (ej: ['/home/user/datos.h5']) o None.
             files = await LocalFilePicker(directory="~", multiple=False)
-            ui.notify(f'You selected {files[0]}')
+            ui.notify(f"You selected {files[0]}")
 
         if files:
             app.storage.user["h5_path"] = files[0]
@@ -81,4 +81,3 @@ def _build_tabs() -> None:
             create_merger_tab()
         with ui.tab_panel("export"):
             create_exporter_tab()
-

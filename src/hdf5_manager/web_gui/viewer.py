@@ -22,7 +22,7 @@ import os
 import h5py
 from nicegui import app, ui
 
-from hdf5_manager.core.tree import build_tree
+from hdf5_manager.core.tree import _attr_to_python, build_tree, get_node
 
 
 @ui.refreshable
@@ -87,6 +87,7 @@ def _build_tree_panel(path: str) -> ui.tree:
     return tree
 
 
+@ui.refreshable
 def _build_attributes_panel() -> None:
     """Upper right panel: node attributes.
 
@@ -95,21 +96,112 @@ def _build_attributes_panel() -> None:
     ``timestamp`` attributes).
     """
     ui.label("Attributes").classes("text-subtitle2 p-2 pb-0")
-    ui.label("Select a node to view attributes").classes(
-        "text-grey text-sm p-2"
-    )
+    node_id = app.storage.user.get("selected_node", None)
+    if not node_id:
+        ui.label("Select a node to view attributes").classes("text-grey text-sm p-2")
+        return
+    path = app.storage.user.get("h5_path", None)
+    if not path or not os.path.isfile(path):
+        ui.label("No file open").classes("text-grey text-sm p-2")
+        return
+    with h5py.File(path, "r") as f:
+        node = get_node(f, node_id)
+        attrs = {k: _attr_to_python(v) for k, v in node.attrs.items()}
+    if not attrs:
+        ui.label("No attributes").classes("text-grey text-sm p-2")
+        return
+    ui.table(
+        columns=[
+            {"id": "Name", "label": "Name", "field": "Name", "align": "left"},
+            {"id": "Value", "label": "Value", "field": "Value", "align": "center"},
+        ],
+        rows=[{"Name": k, "Value": v} for k, v in attrs.items()],
+        pagination=4,
+    ).classes("w-full overflow-auto")
 
 
+@ui.refreshable
 def _build_dataset_preview() -> None:
     """Lower right panel: dataset contents preview.
 
-    Placeholder. Will render an ``ui.aggrid`` from a pandas DataFrame
-    once a dataset node is selected.
+    Displays the first 20 elements of a dataset (head only). Shows
+    shape, dtype, and total size as a header, then a ``ui.table`` with
+    the data. Supports 1D (single column) and 2D (column-per-axis) shapes;
+    higher dimensions show a placeholder.
     """
     ui.label("Dataset Preview").classes("text-subtitle2 p-2 pb-0")
-    ui.label("Select a dataset to preview its contents").classes(
-        "text-grey text-sm p-2"
-    )
+
+    node_id = app.storage.user.get("selected_node", None)
+    if not node_id:
+        ui.label("Select a node to view dataset contents").classes(
+            "text-grey text-sm p-2"
+        )
+        return
+    path = app.storage.user.get("h5_path", None)
+    if not path or not os.path.isfile(path):
+        ui.label("No file open").classes("text-grey text-sm p-2")
+        return
+
+    with h5py.File(path, "r") as f:
+        node = get_node(f, node_id)
+        if not isinstance(node, h5py.Dataset):
+            ui.label("(not a dataset — select a dataset leaf)").classes(
+                "text-grey text-sm p-2"
+            )
+            return
+
+        # Header with metadata.
+        ui.label(
+            f"Shape: {node.shape}    Dtype: {node.dtype}    Size: {node.size:,}"
+        ).classes("text-caption text-grey p-2")
+
+        # Total number of rows along axis 0 (works for 1D and 2D).
+        n = node.shape[0] if node.ndim >= 1 else 0
+        head_n = min(20, n)
+        if head_n == 0:
+            ui.label("(empty dataset)").classes("text-grey text-sm p-2")
+            return
+        # Read only what we need — never the whole dataset.
+        data = node[:head_n]
+
+        if data.ndim == 1:
+            columns = [
+                {"name": "idx", "label": "idx", "field": "idx", "align": "right"},
+                {"name": "v", "label": "value", "field": "v", "align": "left"},
+            ]
+            rows = [{"idx": i, "v": _attr_to_python(v)} for i, v in enumerate(data)]
+        elif data.ndim == 2:
+            n_cols = data.shape[1]
+            columns = [
+                {"name": "idx", "label": "idx", "field": "idx", "align": "right"}
+            ]
+            for j in range(n_cols):
+                columns.append(
+                    {
+                        "name": f"c{j}",
+                        "label": f"col_{j}",
+                        "field": f"c{j}",
+                        "align": "left",
+                    }
+                )
+            rows = []
+            for i in range(data.shape[0]):
+                row: dict[str, object] = {"idx": i}
+                for j in range(n_cols):
+                    row[f"c{j}"] = _attr_to_python(data[i, j])
+                rows.append(row)
+        else:
+            ui.label(f"(N-D preview not supported for {data.ndim}D datasets)").classes(
+                "text-grey text-sm p-2"
+            )
+            return
+
+    if n > head_n:
+        ui.label(f"(showing first {head_n} of {n:,} rows)").classes(
+            "text-caption text-grey p-1"
+        )
+
+    ui.table(columns=columns, rows=rows, row_key="idx").classes("w-full overflow-auto")
 
 
 def _on_tree_select(event) -> None:
@@ -133,5 +225,8 @@ def _on_tree_select(event) -> None:
     wiring is working end-to-end.
     """
     if event.value:
+        app.storage.user["selected_node"] = event.value
+        _build_attributes_panel.refresh()
+        _build_dataset_preview.refresh()
         node_id = event.value
         ui.notify(f"Selected: {node_id}")
