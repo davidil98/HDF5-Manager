@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+from typing import Any
 
 import h5py
 
@@ -100,3 +102,61 @@ def create_group(h5file: h5py.File, parent_path: str, name: str) -> h5py.Group:
         The newly created Group.
     """
     return h5file[parent_path].create_group(name)
+
+
+def apply_changes(
+    source_path: str,
+    changes: list[dict[str, Any]],
+    output_path: str,
+    overwrite: bool = False,
+) -> None:
+    """Apply a batch of pending changes from source to a new output file.
+
+    The workflow is:
+
+    1. Copy *source_path* to *output_path* (preserves the original).
+    2. Open *output_path* in ``r+`` mode and apply each change in order.
+
+    The source file is never modified. If *output_path* already exists,
+    the call refuses unless *overwrite* is True.
+
+    Args:
+        source_path: Path to the source HDF5 file.
+        changes: List of change dicts. Each must contain:
+
+            - ``{"action": "rename", "path": str, "new_name": str}``
+            - ``{"action": "delete", "path": str}``
+
+        output_path: Destination path. Created by the function.
+        overwrite: If True, replace existing *output_path*.
+
+    Raises:
+        FileExistsError: If *output_path* exists and *overwrite* is False.
+        ValueError: If a change dict has an unknown action or invalid keys.
+        KeyError: If a change references a path that doesn't exist in source.
+    """
+    if os.path.exists(output_path) and not overwrite:
+        raise FileExistsError(
+            f"{output_path} already exists; enable overwrite to replace."
+        )
+
+    shutil.copy2(source_path, output_path)
+
+    with h5py.File(output_path, "r+") as f:
+        for i, change in enumerate(changes):
+            action = change.get("action")
+            if action == "rename":
+                new_name = change.get("new_name")
+                path = change.get("path")
+                if not new_name or not path:
+                    raise ValueError(
+                        f"Change #{i} (rename) missing 'path' or 'new_name'"
+                    )
+                rename_node(f, path, new_name)
+            elif action == "delete":
+                path = change.get("path")
+                if not path:
+                    raise ValueError(f"Change #{i} (delete) missing 'path'")
+                delete_node(f, path)
+            else:
+                raise ValueError(f"Change #{i} has unknown action: {action!r}")

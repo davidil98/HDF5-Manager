@@ -54,6 +54,7 @@ def _build_toolbar() -> None:
         if files:
             app.storage.user["h5_path"] = files[0]
             create_viewer_tab.refresh()
+            create_editor_tab.refresh()
 
     with ui.row().classes("w-full items-center gap-2 p-2"):
         ui.button("Open File", icon="folder_open", on_click=_pick_file)
