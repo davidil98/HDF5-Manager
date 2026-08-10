@@ -201,7 +201,11 @@ def _build_dataset_preview() -> None:
             "text-caption text-grey p-1"
         )
 
-    ui.table(columns=columns, rows=rows, row_key="idx").classes("w-full overflow-auto")
+    with ui.splitter() as splitter:
+        with splitter.before:
+            ui.table(columns=columns, rows=rows[0:int(len(rows)/2)], row_key="idx").classes("w-full overflow-auto")
+        with splitter.after:
+            ui.table(columns=columns, rows=rows[int(len(rows)/2):], row_key="idx").classes("w-full overflow-auto")
 
 
 def _on_tree_select(event) -> None:
@@ -211,22 +215,9 @@ def _on_tree_select(event) -> None:
         event: NiceGUI TreeEventArguments. ``event.value`` is the id
             of the selected node, e.g. ``"/batch2_muestra1_01/curve_000"``
             or ``"/batch2_muestra1_01/curve_000/measured_I_DS"``.
-
-    TODO: implement the actual logic:
-        - if the node is a group: show its attributes in the right panel
-        - if the node is a dataset: show its attributes AND render
-          the data as a DataFrame in an ``ui.aggrid`` (paginated for
-          large arrays)
-        - use ``app.storage.user["h5_path"]`` to reopen the file, or
-          (better) cache the open ``h5py.File`` handle somewhere
-          shared so you don't reopen on every click.
-
-    For now this just notifies the selection so you can verify the
-    wiring is working end-to-end.
     """
     if event.value:
         app.storage.user["selected_node"] = event.value
         _build_attributes_panel.refresh()
         _build_dataset_preview.refresh()
-        node_id = event.value
-        ui.notify(f"Selected: {node_id}")
+        node_id = event.value # this can be use to notify or show selected node/item. For now, theres no plans.
