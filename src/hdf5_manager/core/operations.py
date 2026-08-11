@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+from contextlib import ExitStack
 from typing import Any
 
 import h5py
@@ -108,6 +109,118 @@ def merge_files(
         new_name: Optional new name; defaults to original basename.
     """
     dest[dest_parent].copy(source[source_path], dest[dest_parent], name=new_name)
+
+
+def default_merge_output_path(destination_path: str) -> str:
+    """Return a default output path with ``-merged`` before the extension."""
+    base, ext = os.path.splitext(destination_path)
+    return f"{base}-merged{ext}"
+
+
+def apply_merges(
+    merges: list[dict[str, Any]],
+    output_path: str,
+    overwrite: bool = False,
+) -> None:
+    """Apply a batch of cross-file group copies atomically.
+
+    Each merge record must contain ``source_file``, ``source_path``,
+    ``dest_file`` and ``dest_parent``. All records must use the same
+    destination file because one output file is produced. The destination is
+    copied to a temporary file, all merges are applied there, and the output
+    is replaced only after success.
+
+    Source and destination files are never modified unless *output_path* is
+    explicitly the destination path with ``overwrite=True``. The source is
+    always protected from being used as the output.
+    """
+    if not merges:
+        raise ValueError("At least one merge is required")
+    if os.path.exists(output_path) and not overwrite:
+        raise FileExistsError(
+            f"{output_path} already exists; pass overwrite=True to replace."
+        )
+
+    required = ("source_file", "source_path", "dest_file", "dest_parent")
+    destination_files = set()
+    for i, merge in enumerate(merges):
+        missing = [key for key in required if not merge.get(key)]
+        if missing:
+            raise ValueError(f"Merge #{i} is missing: {', '.join(missing)}")
+        destination_files.add(os.path.abspath(merge["dest_file"]))
+        if not os.path.isfile(merge["source_file"]):
+            raise FileNotFoundError(merge["source_file"])
+        if not os.path.isfile(merge["dest_file"]):
+            raise FileNotFoundError(merge["dest_file"])
+        if os.path.abspath(merge["source_file"]) == os.path.abspath(merge["dest_file"]):
+            raise ValueError("Source and destination must be different files")
+        if os.path.abspath(output_path) == os.path.abspath(merge["source_file"]):
+            raise ValueError("Output cannot replace a source file")
+
+    if len(destination_files) != 1:
+        raise ValueError("All merges must use the same destination file")
+    destination_path = next(iter(destination_files))
+
+    # Validate names and existing conflicts before creating any output.
+    occupied: set[tuple[str, str]] = set()
+    with h5py.File(destination_path, "r") as destination:
+        for i, merge in enumerate(merges):
+            source_path = merge["source_path"]
+            dest_parent = merge["dest_parent"]
+            name = merge.get("name") or os.path.basename(source_path.rstrip("/"))
+            if "/" in name or not name:
+                raise ValueError(f"Merge #{i} has an invalid destination name")
+            with h5py.File(merge["source_file"], "r") as source:
+                if source_path not in source:
+                    raise KeyError(source_path)
+                if not isinstance(source[source_path], h5py.Group):
+                    raise ValueError(f"Only groups can be merged: {source_path}")
+            if dest_parent not in destination:
+                raise KeyError(dest_parent)
+            if not isinstance(destination[dest_parent], h5py.Group):
+                raise ValueError(f"Destination is not a group: {dest_parent}")
+            key = (dest_parent, name)
+            if name in destination[dest_parent] or key in occupied:
+                raise ValueError(f"'{name}' already exists in '{dest_parent}'")
+            occupied.add(key)
+
+    output_dir = os.path.dirname(os.path.abspath(output_path)) or "."
+    fd, temp_path = tempfile.mkstemp(
+        prefix=".hdf5_merge_",
+        suffix=".h5.tmp",
+        dir=output_dir,
+    )
+    os.close(fd)
+
+    try:
+        shutil.copy2(destination_path, temp_path)
+        with h5py.File(temp_path, "r+") as destination, ExitStack() as stack:
+            sources: dict[str, h5py.File] = {}
+            for merge in merges:
+                source_file = os.path.abspath(merge["source_file"])
+                if source_file not in sources:
+                    sources[source_file] = stack.enter_context(
+                        h5py.File(source_file, "r")
+                    )
+                merge_files(
+                    sources[source_file],
+                    merge["source_path"],
+                    destination,
+                    merge["dest_parent"],
+                    merge.get("name"),
+                )
+
+        try:
+            os.replace(temp_path, output_path)
+        except OSError:
+            shutil.move(temp_path, output_path)
+    except Exception:
+        if os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+        raise
 
 
 def create_group(h5file: h5py.File, parent_path: str, name: str) -> h5py.Group:

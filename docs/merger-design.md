@@ -1,118 +1,99 @@
-# Merger — Análisis de opciones (diferido)
+# Merger - Diseño y estado
 
-Estado: pendiente. Se decidió no implementar esta feature todavía porque el
-diseño se estaba complicando (cross-panel drag tiene fricción con el patrón
-HTML5 D&D nativo y el PR oficial de NiceGUI para `ui.sortable` aún no está
-mergeado).
+Estado: implementacion inicial.
 
 ## Objetivo
 
-Mover grupos HDF5 entre dos archivos (source → destination), con preview
-antes de aplicar (igual que el Editor).
+Copiar grupos HDF5 desde un archivo source hacia un archivo destination con
+preview visual estilo Trello. Los archivos de entrada no se modifican durante
+la seleccion ni durante el preview. El resultado se escribe por defecto en
+`<destination>-merged.<ext>`.
 
-## Opciones evaluadas
+La primera version permite arrastrar grupos de nivel raiz. Cada tarjeta
+incluye sus datasets y subgrupos; los datasets no son arrastrables.
 
-### Opción A: SortableJS (lo que recomienda la discussion #932)
+## UX
 
-- **Cómo**: `ui.add_body_html(SortableJS CDN)`, classes `.sortable-source` y
-  `.sortable-dest`, emit eventos vía `ui.on("item-dropped")`.
-- **Pros**: drag real cross-panel, touch support, animations out-of-the-box.
-- **Contras**:
-  - NiceGUI no lo expone oficialmente aún (PR #4656 en revisión).
-  - Requiere conocer SortableJS.
-  - Bundle externo de ~20KB.
+- La columna izquierda muestra las tarjetas del source.
+- La columna derecha muestra el destination y sus grupos como tarjetas.
+- Un selector elige el grupo destination que recibira la copia.
+- Cada tarjeta de grupo y subgroup tiene un boton `Add`.
+- Un click en `Add` crea un registro en `pending_merges`.
+- El destination se reconstruye virtualmente despues de cada drop.
+- Source permanece visible porque el merge es una copia, no un move.
+- `Restore` elimina todos los movimientos pendientes.
+- Cada movimiento puede eliminarse individualmente.
+- `Apply` reemplaza el output solo despues de confirmar si ya existe.
 
-```python
-ui.add_body_html('''
-<script type="module">
-import 'https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js';
-document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('.sortable-source, .sortable-dest').forEach((el) => {
-        Sortable.create(el, {
-            group: 'shared',
-            animation: 150,
-            onEnd: (evt) => emitEvent('item-moved', {
-                from: evt.from.id, to: evt.to.id, item: evt.item.dataset.path
-            });
-        });
-    });
-});
-</script>
-''')
-```
+## Estado
 
-### Opción B: HTML5 D&D nativo (patrón del ejemplo Trello)
+El merger usa claves separadas en `app.storage.user`:
 
-- **Cómo**: subclass `ui.card` con `on('dragstart')`, subclass `ui.column` con
-  `on('drop')`. Estado global `dragged` / `target`.
-- **Pros**: no necesita librería externa, funciona ya en NiceGUI.
-- **Contras**:
-  - **Falko (maintainer) admite problemas con dos columnas separadas**:
-    "Sadly this somehow does not work for me when I have two columns".
-  - No funciona en touch devices (límite de HTML5 D&D).
-  - Mucho código custom para cross-panel.
+- `h5_path` como source global, compartido con Viewer y Editor
+- `merger_dest_path`
+- `merger_dest_parent`
+- `merger_output_path`
+- `pending_merges`
 
-### Opción C: Botón "Add to queue" por card (preview-pattern del Editor)
-
-- **Cómo**: cada card del source tiene un botón que agrega a
-  `pending_merges` (lista en `app.storage.user`). Panel lateral muestra los
-  pendientes. Apply itera la lista y llama `merge_files()`.
-- **Pros**:
-  - Reutiliza exactamente el patrón del Editor (preview + apply + restore).
-  - Sin librerías externas, sin JavaScript custom.
-  - Funciona en touch, funciona siempre.
-  - Validación de conflictos al momento de hacer click (más control).
-- **Contras**: no es drag visual, es click. Menos "vistoso".
-
-## Recomendación cuando se retome
-
-**Opción C** como MVP. **Opción A** si querés drag visual después de que se
-mergee `ui.sortable` en NiceGUI. **Evitar Opción B** porque el maintainer
-mismo reporta fricción.
-
-## Estructura final del layout (Opción C)
-
-```
-┌─ Merger ──────────────────────────────────────────────────────────────┐
-│  Source: [/path/to/exp1.h5] [📁 Browse]                                │
-│  Dest:   [/path/to/exp2.h5] [📁 Browse]                                │
-│                                                                          │
-│  ┌─ Source groups (cards) ─────────────┐  ┌─ Pending merges ────────┐ │
-│  │ ┌─batch2_..._00 [Add to queue] ──┐ │  │ • batch2_..._00 → dest   │ │
-│  │ ┌─batch2_..._01 [Add to queue] ──┐ │  │ • batch2_..._01 → dest   │ │
-│  └────────────────────────────────────┘  └─────────────────────────┘ │
-│                                                                          │
-│  ☐ Reemplazar si existe                                                │
-│                                                                          │
-│  [Restore] [Apply]                                                     │
-└────────────────────────────────────────────────────────────────────── ┘
-```
-
-## Estado de funciones del core necesarias
-
-- `merge_files()` ya existe en `core/operations.py:72`.
-- Falta `apply_merges()` que itere una lista de merges y los aplique todos
-  antes de cerrar el handle de destino:
+Los movimientos guardan rutas HDF5 y rutas de archivos, no IDs del DOM:
 
 ```python
-# Pendiente en core/operations.py
-def apply_merges(
-    merges: list[dict],
-    overwrite: bool = False,
-) -> None:
-    """Apply a batch of merges. Group by dest_file to avoid reopening."""
-    by_dest = {}
-    for m in merges:
-        by_dest.setdefault(m["dest_file"], []).append(m)
-    for dest_path, dest_merges in by_dest.items():
-        with h5py.File(dest_path, "r+") as dest:
-            for m in dest_merges:
-                with h5py.File(m["source_file"], "r") as src:
-                    merge_files(src, m["source_group"], dest, m["dest_parent"])
+{
+    "source_file": "/data/source.h5",
+    "source_path": "/group_a",
+    "dest_file": "/data/destination.h5",
+    "dest_parent": "/target",
+}
 ```
+
+`core.merge.apply_virtual_merges()` es una funcion pura. Copia el arbol del
+source, rebasa las rutas al destination y marca las copias con `pending=True`.
+No abre ni modifica archivos.
+
+## Interaccion estable
+
+La primera implementacion intento usar SortableJS con un controller para cada
+zona de drop. Cada movimiento refrescaba todo el tablero y recreaba controllers
+Vue despues de inicializar el cliente. En native mode esto producia latencia,
+desincronizaciones y reinicios.
+
+El Merger usa ahora tarjetas estaticas y botones `Add`. No necesita SortableJS,
+import maps ni JavaScript custom. Esto permite que cualquier subgroup sea
+seleccionable sin crear zonas de drop anidadas. Los datasets son filas normales
+y no se copian individualmente.
+
+## Core y seguridad
+
+`core.operations.apply_merges()`:
+
+1. Valida todos los source groups y destination parents.
+2. Rechaza conflictos de nombre antes de crear el output.
+3. Copia destination a un archivo temporal.
+4. Aplica todos los merges sobre el temporal.
+5. Reemplaza el output atomically al terminar.
+
+El source nunca puede ser el output. Source y destination deben ser archivos
+distintos. Los conflictos de nombres HDF5 se rechazan en esta version; el
+overwrite del archivo de salida es una decision independiente.
+
+## Limitaciones conocidas
+
+- No hay drag and drop en esta version; la operacion se inicia con `Add`.
+- Los grupos importados en preview no son zonas de drop.
+- No se permite copiar datasets individualmente.
+- No hay reorder persistente: el arbol del proyecto ordena nombres
+  alfabeticamente y el orden de las tarjetas no tiene significado HDF5.
+- La prueba automatizada del drag visual requiere una prueba de navegador o
+  native mode; el core si tiene cobertura de conflictos y aplicacion atomica.
+
+## Siguiente iteracion
+
+- Medir el tiempo de lectura y preview con archivos grandes.
+- Añadir una estrategia explicita para conflictos de nombres si se necesita
+  reemplazar grupos existentes.
 
 ## Referencias
 
 - Discussion NiceGUI #932: https://github.com/zauberzeug/nicegui/discussions/932
-- Ejemplo Trello cards: https://github.com/zauberzeug/nicegui/tree/main/examples/trello_cards
-- PR NiceGUI #4656 (sortable): https://github.com/zauberzeug/nicegui/pull/4656
+- PR NiceGUI #5855: https://github.com/zauberzeug/nicegui/pull/5855
+- Trello cards example: https://github.com/zauberzeug/nicegui/tree/main/examples/trello_cards

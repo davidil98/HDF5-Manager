@@ -77,10 +77,6 @@ def _build_tree_panel(path: str) -> ui.tree:
         tree_data,
         label_key="label",
         node_key="id",
-        # TODO: replace with a real handler. e.value will be the
-        # selected node id (e.g. "/group/curve_000/measured_I_DS").
-        # You'll want to look up the node's attributes and data
-        # in the right-panel widgets.
         on_select=lambda e: _on_tree_select(e),
     ).classes("w-full h-full overflow-auto")
 
@@ -203,9 +199,17 @@ def _build_dataset_preview() -> None:
 
     with ui.splitter() as splitter:
         with splitter.before:
-            ui.table(columns=columns, rows=rows[0:int(len(rows)/2)], row_key="idx").classes("w-full overflow-auto")
+            ui.table(
+                columns=columns,
+                rows=rows[0 : int(len(rows) / 2)],
+                row_key="idx",
+            ).classes("w-full overflow-auto")
         with splitter.after:
-            ui.table(columns=columns, rows=rows[int(len(rows)/2):], row_key="idx").classes("w-full overflow-auto")
+            ui.table(
+                columns=columns,
+                rows=rows[int(len(rows) / 2) :],
+                row_key="idx",
+            ).classes("w-full overflow-auto")
 
 
 def _on_tree_select(event) -> None:
@@ -220,4 +224,3 @@ def _on_tree_select(event) -> None:
         app.storage.user["selected_node"] = event.value
         _build_attributes_panel.refresh()
         _build_dataset_preview.refresh()
-        node_id = event.value # this can be use to notify or show selected node/item. For now, theres no plans.

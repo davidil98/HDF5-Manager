@@ -1,8 +1,14 @@
 """Quick demo of build_tree output."""
-from hdf5_manager.core.tree import build_tree
-import h5py, numpy as np, tempfile, json
-from tkinter import filedialog as fd
+import json
 import os
+import tempfile
+from tkinter import filedialog as fd
+
+import h5py
+import numpy as np
+
+from hdf5_manager.core.tree import build_tree
+
 
 def select_file():
     filetypes = (

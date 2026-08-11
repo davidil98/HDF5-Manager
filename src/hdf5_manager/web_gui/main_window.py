@@ -58,8 +58,11 @@ def _build_toolbar() -> None:
             app.storage.user["output_path"] = default_output_path(src)
             app.storage.user["pending_changes"] = []
             app.storage.user["selected_node"] = None
+            app.storage.user["pending_merges"] = []
             create_viewer_tab.refresh()
             create_editor_tab.refresh()
+            create_merger_tab.refresh()
+            create_exporter_tab.refresh()
 
     with ui.row().classes("w-full items-center gap-2 p-2"):
         ui.button("Open File", icon="folder_open", on_click=_pick_file)

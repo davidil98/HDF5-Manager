@@ -9,9 +9,12 @@ import tempfile
 import h5py
 import numpy as np
 
+from hdf5_manager.core.merge import apply_virtual_merges
 from hdf5_manager.core.operations import (
     apply_changes,
+    apply_merges,
     copy_node,
+    default_merge_output_path,
     default_output_path,
     delete_node,
     merge_files,
@@ -116,6 +119,109 @@ def test_merge_files() -> None:
 
         os.unlink(path_a)
         os.unlink(path_b)
+
+
+def test_apply_merges_creates_atomic_output() -> None:
+    """A merge batch should leave both input files unchanged."""
+    source = _make_test_file()
+    destination = _make_test_file()
+    output_dir = tempfile.mkdtemp()
+    output = os.path.join(output_dir, "merged.h5")
+    try:
+        merges = [
+            {
+                "source_file": source,
+                "source_path": "/group_b",
+                "dest_file": destination,
+                "dest_parent": "/group_a",
+            }
+        ]
+        apply_merges(merges, output)
+
+        with h5py.File(source, "r") as f:
+            assert "group_b" in f
+        with h5py.File(destination, "r") as f:
+            assert "group_b" not in f["/group_a"]
+        with h5py.File(output, "r") as f:
+            assert "group_b" in f["/group_a"]
+            assert "dset_1" in f["/group_a/group_b"]
+    finally:
+        os.unlink(source)
+        os.unlink(destination)
+        os.unlink(output)
+        os.rmdir(output_dir)
+
+
+def test_apply_merges_rejects_conflicts_before_output() -> None:
+    """Existing destination names should prevent any output from being made."""
+    source = _make_test_file()
+    destination = _make_test_file()
+    output_dir = tempfile.mkdtemp()
+    output = os.path.join(output_dir, "merged.h5")
+    try:
+        merges = [
+            {
+                "source_file": source,
+                "source_path": "/group_b",
+                "dest_file": destination,
+                "dest_parent": "/",
+            }
+        ]
+        try:
+            apply_merges(merges, output)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Expected a destination conflict")
+        assert not os.path.exists(output)
+    finally:
+        os.unlink(source)
+        os.unlink(destination)
+        os.rmdir(output_dir)
+
+
+def test_virtual_merges_rebase_copied_descendants() -> None:
+    """A virtual group copy should contain destination-relative child paths."""
+    source = [
+        {
+            "id": "/source_group",
+            "label": "source_group",
+            "type": "group",
+            "children": [
+                {
+                    "id": "/source_group/data",
+                    "label": "data",
+                    "type": "dataset",
+                    "children": [],
+                }
+            ],
+        }
+    ]
+    destination = [
+        {
+            "id": "/target",
+            "label": "target",
+            "type": "group",
+            "children": [],
+        }
+    ]
+    virtual = apply_virtual_merges(
+        destination,
+        source,
+        [{"source_path": "/source_group", "dest_parent": "/target"}],
+    )
+
+    copied = virtual[0]["children"][0]
+    assert copied["id"] == "/target/source_group"
+    assert copied["children"][0]["id"] == "/target/source_group/data"
+    assert copied["pending"] is True
+    assert destination[0]["children"] == []
+
+
+def test_default_merge_output_path() -> None:
+    """The merge output suffix should be inserted before the extension."""
+    assert default_merge_output_path("/data/foo.h5") == "/data/foo-merged.h5"
+    assert default_merge_output_path("foo.hdf5") == "foo-merged.hdf5"
 
 
 def test_delete_root_raises() -> None:
