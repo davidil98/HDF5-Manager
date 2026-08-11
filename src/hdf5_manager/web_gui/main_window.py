@@ -2,6 +2,7 @@
 
 from nicegui import app, ui
 
+from hdf5_manager.core.operations import default_output_path
 from hdf5_manager.web_gui.editor import create_editor_tab
 from hdf5_manager.web_gui.exporter import create_exporter_tab
 from hdf5_manager.web_gui.general import LocalFilePicker
@@ -52,7 +53,11 @@ def _build_toolbar() -> None:
             ui.notify(f"You selected {files[0]}")
 
         if files:
-            app.storage.user["h5_path"] = files[0]
+            src = files[0]
+            app.storage.user["h5_path"] = src
+            app.storage.user["output_path"] = default_output_path(src)
+            app.storage.user["pending_changes"] = []
+            app.storage.user["selected_node"] = None
             create_viewer_tab.refresh()
             create_editor_tab.refresh()
 

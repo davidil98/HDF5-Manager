@@ -23,7 +23,7 @@ from typing import Any
 import h5py
 from nicegui import app, ui
 
-from hdf5_manager.core.operations import apply_changes
+from hdf5_manager.core.operations import apply_changes, default_output_path
 from hdf5_manager.core.tree import build_tree
 
 # ── Tree virtual helpers (pure functions on dict structure) ────────
@@ -52,14 +52,19 @@ def _virtual_rename(nodes: list[dict], path: str, new_name: str) -> bool:
     if found."""
     for node in nodes:
         if node["id"] == path:
-            parent = "/".join(path.split("/")[:-1])
-            node["id"] = f"{parent}/{new_name}" if parent else f"/{new_name}"
+            old_path = node["id"]
+            parent = "/".join(old_path.split("/")[:-1])
+            new_path = f"{parent}/{new_name}" if parent else f"/{new_name}"
+            node["id"] = new_path
             node["label"] = new_name
+            _virtual_rebase_children(node["children"], old_path, new_path)
             return True
         if node.get("children"):
             if _virtual_rename(node["children"], path, new_name):
                 # Update descendants' ids since their parent path changed.
-                _virtual_rebase_children(node["children"], path, node["id"])
+                parent = "/".join(path.split("/")[:-1])
+                new_path = f"{parent}/{new_name}" if parent else f"/{new_name}"
+                _virtual_rebase_children(node["children"], path, new_path)
                 return True
     return False
 
@@ -92,11 +97,6 @@ def _virtual_delete(nodes: list[dict], path: str) -> bool:
 @ui.refreshable
 def create_editor_tab() -> None:
     """Build the Editor tab layout."""
-    # Top: option to apply changes in a new file (replace semantics).
-    apply_new = ui.checkbox("Apply changes in a new file").bind_value(
-        app.storage.user, "apply_to_new_file"
-    )
-
     with ui.splitter(limits=(250, 500)).classes("w-full flex-grow") as splitter:
         with splitter.before:
             _build_editor_tree_panel()
@@ -107,7 +107,7 @@ def create_editor_tab() -> None:
                 _build_delete_section()
                 _build_pending_list()
                 ui.separator()
-                _build_output_section(apply_new)
+                _build_output_section()
                 _build_apply_buttons()
 
 
@@ -180,8 +180,19 @@ def _build_pending_list() -> None:
 
 
 @ui.refreshable
-def _build_output_section(checkbox: ui.checkbox) -> None:
-    """Output path selector + overwrite toggle."""
+def _build_output_section() -> None:
+    """Source file (read-only) and output path selector.
+
+    ``output_path`` is initialized to ``<source>-edit.<ext>`` whenever a
+    new source is loaded (see ``main_window._pick_file``); this section
+    just renders and lets the user edit or re-pick it.
+    """
+    source = app.storage.user.get("h5_path") or ""
+    ui.label("Source file:").classes("font-bold pt-2")
+    ui.label(source or "(no file loaded)").classes("text-grey text-sm").style(
+        "word-break: break-all; white-space: normal;"
+    )
+
     ui.label("Output path:").classes("font-bold pt-2")
     with ui.row().classes("w-full items-center"):
         output_input = ui.input(placeholder="/path/to/output.h5").classes("flex-grow")
@@ -190,9 +201,6 @@ def _build_output_section(checkbox: ui.checkbox) -> None:
             icon="folder_open",
             on_click=lambda: _pick_output_path(),
         )
-
-    # The "Reemplazar" toggle is the same as apply_to_new_file at the top.
-    ui.checkbox("Reemplazar si existe").bind_value(checkbox, "value")
 
 
 @ui.refreshable
@@ -213,7 +221,11 @@ def _on_select(event: Any) -> None:
 
 
 def _queue_rename(new_name: str) -> None:
-    """Add a rename change to pending_changes."""
+    """Add a rename change to pending_changes.
+
+    If the requested name collides with an existing sibling in the
+    virtual tree, ``_edit`` is appended until a free name is found.
+    """
     new_name = (new_name or "").strip()
     if not new_name:
         ui.notify("Enter a name first", type="warning")
@@ -228,14 +240,85 @@ def _queue_rename(new_name: str) -> None:
     if node == "/":
         ui.notify("Cannot rename the root group", type="negative")
         return
+
+    current_label = os.path.basename(node)
+    siblings = _virtual_sibling_labels(node)
+    final_name = _unique_sibling_name(siblings, current_label, new_name)
+    if final_name != new_name:
+        ui.notify(
+            f"'{new_name}' already exists; using '{final_name}'", type="info"
+        )
+
+    parent = "/".join(node.split("/")[:-1])
+    new_path = f"{parent}/{final_name}" if parent else f"/{final_name}"
+
     pending = list(app.storage.user.get("pending_changes", []))
-    pending.append({"action": "rename", "path": node, "new_name": new_name})
+    pending.append({"action": "rename", "path": node, "new_name": final_name})
     app.storage.user["pending_changes"] = pending
+    # Keep selected_node in sync with the updated virtual tree so that
+    # follow-up operations (rename, delete) on the same node reference
+    # the new id, not the stale one.
+    app.storage.user["selected_node"] = new_path
     _build_editor_tree_panel.refresh()
     _build_pending_list.refresh()
+    _build_selected_info.refresh()
     ui.notify(
-        f"Queued: rename {os.path.basename(node)} → {new_name}", type="positive"
+        f"Queued: rename {current_label} → {final_name}", type="positive"
     )
+
+
+# ── Sibling-name collision helpers ─────────────────────────────────
+
+
+def _find_node(nodes: list[dict], path: str) -> dict | None:
+    """Return the node with id == path, or None if not found."""
+    for n in nodes:
+        if n["id"] == path:
+            return n
+        if n.get("children"):
+            found = _find_node(n["children"], path)
+            if found is not None:
+                return found
+    return None
+
+
+def _virtual_sibling_labels(selected_path: str) -> set[str]:
+    """Return the set of basenames among siblings of *selected_path*.
+
+    The siblings are taken from the current virtual tree (source plus
+    pending changes), so a rename previously queued by the user is
+    correctly considered as occupied.
+    """
+    parent_path = "/".join(selected_path.split("/")[:-1])
+    source = app.storage.user.get("h5_path")
+    pending = app.storage.user.get("pending_changes", [])
+    if not source or not os.path.isfile(source):
+        return set()
+    with h5py.File(source, "r") as f:
+        raw_tree = build_tree(f)
+    virtual_tree = apply_virtual_changes(raw_tree, pending)
+    if not parent_path or parent_path == "/":
+        return {n["label"] for n in virtual_tree}
+    parent = _find_node(virtual_tree, parent_path)
+    if parent is None:
+        return set()
+    return {c["label"] for c in parent.get("children", [])}
+
+
+def _unique_sibling_name(
+    siblings: set[str], current_label: str, requested: str
+) -> str:
+    """Return a sibling name that does not collide.
+
+    If *requested* is already used by a *different* sibling, ``_edit``
+    is appended repeatedly until a free name is found. The current
+    label of the node is excluded from the collision check so a
+    no-op rename (renaming to the same name) is accepted as-is.
+    """
+    candidate = requested
+    while candidate in siblings and candidate != current_label:
+        candidate = f"{candidate}_edit"
+    return candidate
 
 
 def _confirm_queue_delete() -> None:
@@ -282,7 +365,13 @@ def _restore_changes() -> None:
 
 
 def _apply_changes() -> None:
-    """Apply pending changes to the output file."""
+    """Apply pending changes to the output path.
+
+    The destination is taken from ``app.storage.user["output_path"]``; if it
+    is empty, it falls back to ``<source>-edit.<ext>``. When the destination
+    is the source itself or already exists on disk, an explicit confirmation
+    dialog is shown before mutating anything.
+    """
     source = app.storage.user.get("h5_path")
     if not source or not os.path.isfile(source):
         ui.notify("No source file open", type="negative")
@@ -292,36 +381,56 @@ def _apply_changes() -> None:
         ui.notify("No pending changes", type="warning")
         return
 
-    # Decide output path. If apply_to_new_file is False (default), the
-    # user wants to overwrite the source itself — apply_changes already
-    # supports this via overwrite=True. Otherwise, use output_path.
-    apply_to_new = app.storage.user.get("apply_to_new_file", False)
-    if apply_to_new:
-        output = app.storage.user.get("output_path", "").strip()
-        if not output:
-            ui.notify("Specify an output path first", type="warning")
-            return
-        overwrite = app.storage.user.get("reemplazar", False)
-    else:
-        # Overwrite the source itself (with the user's explicit "Apply").
-        output = source
-        overwrite = True
+    output = (app.storage.user.get("output_path") or "").strip()
+    if not output:
+        output = default_output_path(source)
+        app.storage.user["output_path"] = output
 
+    overwrite_target = (
+        os.path.abspath(output) == os.path.abspath(source)
+        or os.path.exists(output)
+    )
+    if overwrite_target:
+        _confirm_apply(source, output, pending)
+    else:
+        _do_apply(source, output, pending)
+
+
+def _confirm_apply(source: str, output: str, pending: list[dict[str, Any]]) -> None:
+    """Ask the user before overwriting the source or an existing destination."""
+    same_as_source = os.path.abspath(output) == os.path.abspath(source)
+    label = "the source file" if same_as_source else f"'{os.path.basename(output)}'"
+
+    def _on_overwrite() -> None:
+        dialog.close()
+        _do_apply(source, output, pending)
+
+    with ui.dialog() as dialog, ui.card():
+        ui.label(f"{label} will be overwritten").classes("text-h6")
+        ui.label(
+            f"{len(pending)} pending change(s) will be applied. "
+            "This cannot be undone."
+        ).classes("text-grey")
+        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+            ui.button("Cancel", on_click=dialog.close).props("outline")
+            ui.button("Overwrite", on_click=_on_overwrite, color="negative")
+    dialog.open()
+
+
+def _do_apply(source: str, output: str, pending: list[dict[str, Any]]) -> None:
+    """Run ``apply_changes`` and refresh the editor UI on success."""
     try:
-        apply_changes(source, pending, output, overwrite=overwrite)
-    except FileExistsError:
-        ui.notify(
-            "Output exists; enable 'Reemplazar' or change the path", type="negative"
-        )
-        return
-    except (ValueError, KeyError, OSError) as e:
+        apply_changes(source, pending, output, overwrite=True)
+    except (FileExistsError, ValueError, KeyError, OSError) as e:
         ui.notify(f"Apply failed: {e}", type="negative")
         return
 
     app.storage.user["pending_changes"] = []
+    app.storage.user["selected_node"] = None
     ui.notify(f"Applied {len(pending)} changes to {output}", type="positive")
     _build_editor_tree_panel.refresh()
     _build_pending_list.refresh()
+    _build_selected_info.refresh()
 
 
 def _pick_output_path() -> None:

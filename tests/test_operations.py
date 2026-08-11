@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import glob
+import os
 import tempfile
 
 import h5py
@@ -10,6 +12,7 @@ import numpy as np
 from hdf5_manager.core.operations import (
     apply_changes,
     copy_node,
+    default_output_path,
     delete_node,
     merge_files,
     move_node,
@@ -247,7 +250,8 @@ def test_apply_changes_invalid_action() -> None:
             raise AssertionError("Expected ValueError")
     finally:
         os.unlink(source)
-        os.unlink(output_path)
+        if os.path.exists(output_path):
+            os.unlink(output_path)
         os.rmdir(output_dir)
 
 
@@ -290,5 +294,207 @@ def test_apply_changes_missing_path() -> None:
             raise AssertionError("Expected ValueError")
     finally:
         os.unlink(source)
-        os.unlink(output_path)
+        if os.path.exists(output_path):
+            os.unlink(output_path)
+        os.rmdir(output_dir)
+
+
+def test_default_output_path() -> None:
+    """Naming helper inserts -edit before the extension."""
+    assert default_output_path("/data/foo.h5") == "/data/foo-edit.h5"
+    assert default_output_path("/data/foo.hdf5") == "/data/foo-edit.hdf5"
+    assert default_output_path("/data/foo") == "/data/foo-edit"
+    assert default_output_path("foo.h5") == "foo-edit.h5"
+
+
+def test_apply_changes_in_place_overwrite() -> None:
+    """When output_path == source_path the source is replaced atomically.
+
+    The source must end up with the changes applied, not corrupted.
+    """
+    source = _make_test_file()
+    try:
+        changes = [{"action": "rename", "path": "/group_a", "new_name": "renamed"}]
+        apply_changes(source, changes, source, overwrite=True)
+        with h5py.File(source, "r") as f:
+            assert "renamed" in f
+            assert "group_a" not in f
+    finally:
+        os.unlink(source)
+
+
+def test_apply_changes_cleans_up_temp_on_failure() -> None:
+    """If a change raises mid-flight, no residual temp file is left behind."""
+    source = _make_test_file()
+    output_dir = tempfile.mkdtemp()
+    output_path = os.path.join(output_dir, "out.h5")
+    try:
+        # Force a failure: reference a path that does not exist.
+        changes = [{"action": "delete", "path": "/nonexistent_group"}]
+        try:
+            apply_changes(source, changes, output_path, overwrite=False)
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("Expected KeyError")
+
+        # Output must not be created and no temp file should linger.
+        assert not os.path.exists(output_path)
+        temps = glob.glob(os.path.join(output_dir, ".hdf5_apply_*"))
+        assert temps == [], f"Leftover temp files: {temps}"
+    finally:
+        os.unlink(source)
+        os.rmdir(output_dir)
+
+
+def test_unique_sibling_name_no_collision() -> None:
+    """Returns the requested name unchanged when there is no collision."""
+    from hdf5_manager.web_gui.editor import _unique_sibling_name
+
+    siblings = {"other", "data_edit"}
+    assert _unique_sibling_name(siblings, "current", "fresh") == "fresh"
+
+
+def test_unique_sibling_name_no_op_rename_allowed() -> None:
+    """Renaming a node to its own current label is accepted as-is."""
+    from hdf5_manager.web_gui.editor import _unique_sibling_name
+
+    siblings = {"data"}
+    assert _unique_sibling_name(siblings, "data", "data") == "data"
+
+
+def test_unique_sibling_name_appends_edit() -> None:
+    """First collision appends _edit; chained collisions chain _edit."""
+    from hdf5_manager.web_gui.editor import _unique_sibling_name
+
+    siblings = {"data"}
+    assert _unique_sibling_name(siblings, "other", "data") == "data_edit"
+
+    siblings = {"data", "data_edit"}
+    assert _unique_sibling_name(siblings, "other", "data") == "data_edit_edit"
+
+
+def test_rename_node_raises_on_collision() -> None:
+    """Backend defensive check refuses to clobber an existing sibling."""
+    path = _make_test_file()
+    try:
+        with h5py.File(path, "r+") as f:
+            # Both /group_a and /group_b exist at root.
+            try:
+                rename_node(f, "/group_a", "group_b")
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Expected ValueError on collision")
+            # Both groups still exist after the rejected rename.
+            assert "group_a" in f
+            assert "group_b" in f
+    finally:
+        os.unlink(path)
+
+
+def _make_nested_test_file() -> str:
+    """Create a file with a parent group containing a child dataset."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".h5", delete=False)
+    tmp.close()
+    with h5py.File(tmp.name, "w") as f:
+        grp = f.create_group("Batch1_Dispositivo1_Output1_00")
+        grp.create_dataset("curve_010", data=np.array([1, 2, 3]))
+    return tmp.name
+
+
+def test_virtual_rename_rebases_child_paths() -> None:
+    """Renaming a parent must also rewrite its children's ids."""
+    from hdf5_manager.web_gui.editor import apply_virtual_changes
+
+    raw_tree = [
+        {
+            "id": "/Batch1_Dispositivo1_Output1_00",
+            "label": "Batch1_Dispositivo1_Output1_00",
+            "children": [
+                {
+                    "id": "/Batch1_Dispositivo1_Output1_00/curve_010",
+                    "label": "curve_010",
+                    "children": [],
+                    "type": "dataset",
+                }
+            ],
+            "type": "group",
+        }
+    ]
+    pending = [
+        {
+            "action": "rename",
+            "path": "/Batch1_Dispositivo1_Output1_00",
+            "new_name": "Batch1_dispositivo1_Output2_00_edit",
+        }
+    ]
+    new_tree = apply_virtual_changes(raw_tree, pending)
+    parent = new_tree[0]
+    assert parent["id"] == "/Batch1_dispositivo1_Output2_00_edit"
+    assert parent["label"] == "Batch1_dispositivo1_Output2_00_edit"
+    child = parent["children"][0]
+    assert child["id"] == "/Batch1_dispositivo1_Output2_00_edit/curve_010"
+
+
+def test_apply_changes_parent_then_child() -> None:
+    """End-to-end: rename a parent, then a child, both must apply cleanly."""
+    source = _make_nested_test_file()
+    output_dir = tempfile.mkdtemp()
+    output = os.path.join(output_dir, "out.h5")
+    try:
+        # Simulate the user selecting the parent, renaming, then selecting
+        # the child (now under its new path) and renaming it.
+        changes = [
+            {
+                "action": "rename",
+                "path": "/Batch1_Dispositivo1_Output1_00",
+                "new_name": "Batch1_dispositivo1_Output2_00_edit",
+            },
+            {
+                "action": "rename",
+                "path": "/Batch1_dispositivo1_Output2_00_edit/curve_010",
+                "new_name": "curve_000",
+            },
+        ]
+        apply_changes(source, changes, output, overwrite=False)
+
+        with h5py.File(output, "r") as f:
+            assert "Batch1_Dispositivo1_Output1_00" not in f
+            assert "Batch1_dispositivo1_Output2_00_edit" in f
+            assert "curve_010" not in f["/Batch1_dispositivo1_Output2_00_edit"]
+            assert "curve_000" in f["/Batch1_dispositivo1_Output2_00_edit"]
+    finally:
+        os.unlink(source)
+        os.unlink(output)
+        os.rmdir(output_dir)
+
+
+def test_apply_changes_child_then_parent() -> None:
+    """The reverse order (child first, parent second) must also work."""
+    source = _make_nested_test_file()
+    output_dir = tempfile.mkdtemp()
+    output = os.path.join(output_dir, "out.h5")
+    try:
+        # The child's original path is still valid before the parent rename.
+        changes = [
+            {
+                "action": "rename",
+                "path": "/Batch1_Dispositivo1_Output1_00/curve_010",
+                "new_name": "curve_000",
+            },
+            {
+                "action": "rename",
+                "path": "/Batch1_Dispositivo1_Output1_00",
+                "new_name": "Batch1_dispositivo1_Output2_00_edit",
+            },
+        ]
+        apply_changes(source, changes, output, overwrite=False)
+
+        with h5py.File(output, "r") as f:
+            assert "Batch1_dispositivo1_Output2_00_edit" in f
+            assert "curve_000" in f["/Batch1_dispositivo1_Output2_00_edit"]
+    finally:
+        os.unlink(source)
+        os.unlink(output)
         os.rmdir(output_dir)
