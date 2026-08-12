@@ -1,0 +1,80 @@
+name: Release HDF5-Manager
+
+on:
+  push:
+    tags:
+      - 'v*' # Se ejecuta automáticamente cuando subes un tag que empiece con 'v'
+
+jobs:
+  build-windows-exe:
+    name: Build Windows Executable
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install nicegui-pack pyinstaller pywebview[qt]
+          
+      - name: Build EXE
+        run: nicegui-pack --onefile --name "HDF5-Manager" main.py
+          
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdf5-manager-windows-exe
+          path: dist/HDF5-Manager.exe
+
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi  # ¡Debe coincidir exactamente con el "Environment name" que pusiste en PyPI!
+    permissions:
+      id-token: write  # Permiso obligatorio para el Trusted Publishing de PyPI
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      - name: Install build tools
+        run: python -m pip install build
+        
+      - name: Build package (sdist and wheel)
+        run: python -m build
+        
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  create-github-release:
+    name: Create GitHub Release
+    needs: [build-windows-exe, publish-pypi] # Espera a que los dos trabajos anteriores terminen con éxito
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Permiso necesario para crear el Release en GitHub
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        
+      - name: Download EXE artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hdf5-manager-windows-exe
+          path: ./dist
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./dist/HDF5-Manager.exe
+          generate_release_notes: true
