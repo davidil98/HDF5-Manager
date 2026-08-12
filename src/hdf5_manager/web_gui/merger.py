@@ -20,12 +20,7 @@ from hdf5_manager.core.tree import build_tree
 def create_merger_tab() -> None:
     """Build the Merger tab and its stable card-based layout."""
     _ensure_state()
-    ui.label("Merger").classes("text-h5 p-4 pb-1")
-    ui.label(
-        "Add source groups to the queue. Nothing is written until Apply."
-    ).classes("text-grey text-sm px-4")
     _build_file_controls()
-    ui.separator()
 
     source_path = app.storage.user.get("h5_path")
     destination_path = app.storage.user.get("merger_dest_path")
@@ -48,7 +43,20 @@ def create_merger_tab() -> None:
             "text-negative p-4"
         )
         return
-
+    ui.markdown(
+    """
+> **Instructions**
+>
+> Select a destination group, then click **+ Add** on any source group or
+> subgroup to queue it for copying.
+>
+> Click **Root** to select the destination root. Queued copies appear in the
+> destination preview until you click **Apply**.
+    """.strip()
+    ).classes(
+        "w-full mx-4 mb-2 border-primary "
+        "bg-blue-1 px-4 py-3 text-sm shadow-1"
+    )
     with ui.row().classes("w-full items-stretch gap-4 p-4 flex-wrap"):
         with ui.column().classes("grow min-w-[320px] max-w-[50%]"):
             _build_source_board()
@@ -65,6 +73,7 @@ def _ensure_state() -> None:
     defaults: dict[str, Any] = {
         "merger_dest_path": None,
         "merger_dest_parent": "/",
+        "merger_selected_source": None,
         "merger_output_path": None,
         "pending_merges": [],
     }
@@ -73,6 +82,7 @@ def _ensure_state() -> None:
             app.storage.user[key] = value
 
 
+@ui.refreshable
 def _build_file_controls() -> None:
     """Render global source, destination file, and target group controls."""
     source = app.storage.user.get("h5_path") or "No file selected"
@@ -87,14 +97,8 @@ def _build_file_controls() -> None:
 
 
 def _build_destination_selector() -> None:
-    """Render destination file and the group receiving queued copies."""
-    destination = app.storage.user.get("merger_dest_path") or ""
-    options = _destination_group_options(destination)
+    """Render destination file and the currently selected target group."""
     selected = app.storage.user.get("merger_dest_parent") or "/"
-    if selected not in options:
-        selected = "/"
-        app.storage.user["merger_dest_parent"] = selected
-
     with ui.column().classes("grow min-w-[280px]"):
         ui.label("Destination file").classes("font-bold")
         with ui.row().classes("w-full items-center"):
@@ -102,44 +106,16 @@ def _build_destination_selector() -> None:
                 app.storage.user, "merger_dest_path"
             ).classes("grow").props("readonly")
             ui.button(icon="folder_open", on_click=_pick_destination).props("flat")
-        ui.select(
-            options,
-            value=selected,
-            label="Add groups into",
-        ).bind_value(app.storage.user, "merger_dest_parent").classes("w-full")
-
-
-def _destination_group_options(path: str) -> dict[str, str]:
-    """Return root and group paths available as merge destinations."""
-    options = {"/": "Destination root"}
-    if not path or not os.path.isfile(path):
-        return options
-    try:
-        with h5py.File(path, "r") as destination:
-            tree = build_tree(destination)
-    except OSError:
-        return options
-    for node in tree:
-        _add_group_options(node, options)
-    return options
-
-
-def _add_group_options(node: dict[str, Any], options: dict[str, str]) -> None:
-    """Add one group and all descendant groups to a select option mapping."""
-    if node.get("type") != "group":
-        return
-    options[node["id"]] = node["id"]
-    for child in node.get("children", []):
-        _add_group_options(child, options)
 
 
 @ui.refreshable
 def _build_source_board() -> None:
     """Render all source groups as cards, including draggable-depth controls."""
     source_path = app.storage.user.get("h5_path")
+    selected = app.storage.user.get("merger_selected_source")
     ui.label("Source groups").classes("text-subtitle1")
-    ui.label("Use Add on any group or subgroup.").classes(
-        "text-caption text-grey"
+    ui.label(f"Selected source group: {selected or '(none)'}").classes(
+        "text-caption"
     )
     with ui.column().classes(
         "w-full min-h-[100px] gap-2 p-2 bg-grey-2 rounded"
@@ -165,8 +141,14 @@ def _build_source_board() -> None:
 
 def _render_source_group_card(node: dict[str, Any]) -> None:
     """Render a source group card recursively with an Add action."""
-    with ui.card().classes("w-full bg-white"):
-        with ui.row().classes("w-full items-center gap-2"):
+    selected = node.get("id") == app.storage.user.get("merger_selected_source")
+    card_classes = "w-full bg-white"
+    if selected:
+        card_classes += " border-2 border-primary"
+    with ui.card().classes(card_classes):
+        with ui.row().classes("w-full items-center gap-2 cursor-pointer").on(
+            "click", lambda path=node["id"]: _on_source_select(path)
+        ):
             ui.icon("folder").classes("text-amber")
             ui.label(node["label"]).classes("font-bold grow")
             ui.button(
@@ -187,10 +169,13 @@ def _build_destination_board() -> None:
     """Render the destination tree with virtual pending copies."""
     destination_path = str(app.storage.user.get("merger_dest_path") or "")
     source_path = str(app.storage.user.get("h5_path") or "")
-    ui.label("Destination preview").classes("text-subtitle1")
-    ui.label("Queued groups appear here before Apply.").classes(
-        "text-caption text-grey"
-    )
+    selected = app.storage.user.get("merger_dest_parent") or "/"
+    with ui.row().classes("w-full items-center gap-4"):
+        ui.label("Destination preview").classes("text-subtitle1")
+        ui.button("Root", on_click=lambda: _on_destination_select("/")).props(
+            "flat dense"
+        )
+    ui.label(f"Selected destination group: {selected}").classes("text-caption")
     with ui.column().classes(
         "w-full min-h-[100px] gap-2 p-2 bg-grey-2 rounded"
     ):
@@ -226,15 +211,30 @@ def _build_destination_board() -> None:
 def _render_destination_group_card(node: dict[str, Any]) -> None:
     """Render an existing or pending destination group recursively."""
     pending = bool(node.get("pending"))
+    selected = node.get("id") == app.storage.user.get("merger_dest_parent")
     card_classes = "w-full bg-white"
     if pending:
         card_classes += " border-2 border-primary"
+    if selected:
+        card_classes += " ring-2 ring-primary"
     with ui.card().classes(card_classes):
-        with ui.row().classes("w-full items-center gap-2"):
+        with ui.row().classes("w-full items-center gap-2 cursor-pointer").on(
+            "click", lambda path=node["id"]: _on_destination_select(path)
+        ):
             ui.icon("folder").classes("text-amber")
             ui.label(node["label"]).classes("font-bold grow")
             if pending:
                 ui.badge("pending", color="primary")
+                ui.button(
+                    icon="close",
+                ).on(
+                    "click.stop",
+                    lambda source_path=node.get(
+                        "source_path", ""
+                    ), dest_parent=node.get("dest_parent", "/"): _remove_merge_by_paths(
+                        source_path, dest_parent
+                    ),
+                ).props("flat dense round color=negative")
         with ui.column().classes("w-full gap-1 pl-5"):
             for child in node.get("children", []):
                 if child.get("type") == "group":
@@ -252,6 +252,19 @@ def _render_dataset_row(node: dict[str, Any]) -> None:
         dtype = node.get("dtype") or ""
         if shape or dtype:
             ui.label(f"{shape} {dtype}").classes("text-caption text-grey")
+
+
+def _on_source_select(source_path: str) -> None:
+    """Store and display the source group selected by clicking its card."""
+    app.storage.user["merger_selected_source"] = source_path
+    _build_source_board.refresh()
+
+
+def _on_destination_select(destination_path: str) -> None:
+    """Store and display the destination group selected by clicking its card."""
+    app.storage.user["merger_dest_parent"] = destination_path
+    _build_file_controls.refresh()
+    _build_destination_board.refresh()
 
 
 @ui.refreshable
@@ -337,18 +350,66 @@ def _remove_merge(index: int) -> None:
     """Remove one pending merge by its list position."""
     pending = list(app.storage.user.get("pending_merges", []))
     if 0 <= index < len(pending):
-        pending.pop(index)
-        app.storage.user["pending_merges"] = pending
-        _build_destination_board.refresh()
-        _build_pending_panel.refresh()
+        merge = pending[index]
+        _remove_merge_by_paths(
+            str(merge.get("source_path") or ""),
+            str(merge.get("dest_parent") or "/"),
+        )
+
+
+def _remove_merge_by_paths(source_path: str, dest_parent: str) -> None:
+    """Remove a pending merge identified by its source and destination paths."""
+    pending = list(app.storage.user.get("pending_merges", []))
+    for index, merge in enumerate(pending):
+        if (
+            merge.get("source_path") == source_path
+            and (merge.get("dest_parent") or "/") == dest_parent
+        ):
+            pending.pop(index)
+            app.storage.user["pending_merges"] = pending
+            removed_destination = _merge_destination_path(source_path, dest_parent)
+            selected_destination = app.storage.user.get("merger_dest_parent") or "/"
+            if selected_destination == removed_destination or selected_destination.startswith(
+                f"{removed_destination}/"
+            ):
+                app.storage.user["merger_dest_parent"] = "/"
+                _build_file_controls.refresh()
+            _build_destination_board.refresh()
+            _build_pending_panel.refresh()
+            return
+
+
+def _merge_destination_path(source_path: str, dest_parent: str) -> str:
+    """Return the virtual path created by a pending group copy."""
+    name = source_path.rstrip("/").rsplit("/", maxsplit=1)[-1]
+    return f"/{name}" if dest_parent == "/" else f"{dest_parent}/{name}"
 
 
 def _restore_merges() -> None:
     """Clear the virtual merge plan."""
     app.storage.user["pending_merges"] = []
+    if not _destination_group_exists(
+        app.storage.user.get("merger_dest_parent") or "/"
+    ):
+        app.storage.user["merger_dest_parent"] = "/"
+        _build_file_controls.refresh()
     _build_destination_board.refresh()
     _build_pending_panel.refresh()
     ui.notify("Pending merges cleared")
+
+
+def _destination_group_exists(path: str) -> bool:
+    """Return whether *path* is an actual group in the destination file."""
+    if path == "/":
+        return True
+    destination_file = app.storage.user.get("merger_dest_path")
+    if not destination_file or not os.path.isfile(destination_file):
+        return False
+    try:
+        with h5py.File(destination_file, "r") as destination:
+            return path in destination and isinstance(destination[path], h5py.Group)
+    except OSError:
+        return False
 
 
 def _apply_merges() -> None:

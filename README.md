@@ -11,9 +11,12 @@ A standalone desktop tool for viewing, editing, merging, and exporting
 - **Edit** — Rename groups and datasets, delete nodes
 - **Merge** — Copy groups between files, combine measurement runs
 - **Export** — Convert datasets to CSV or Excel in three layouts:
-  - Side-by-side tables
-  - One sheet per group (Excel)
-  - One file per group
+  - **Datasets side by side** — one named file with all selected datasets as
+    columns
+  - **One sheet per group** — one named Excel workbook with one sheet for
+    each selected group
+  - **One file per group** — one automatically named CSV or Excel file per
+    selected group
 
 ## Installation
 

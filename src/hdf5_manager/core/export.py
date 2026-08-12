@@ -2,13 +2,15 @@
 
 Three export modes are supported:
 
-1. ``side_by_side`` — One table per group, datasets placed side by side as columns.
-2. ``sheets`` — One Excel workbook with a sheet per group containing its datasets.
-3. ``per_group`` — One CSV/Excel file per group, each containing its datasets.
+1. ``side_by_side`` -- One file containing all selected datasets as columns.
+2. ``sheets`` -- One Excel workbook with one sheet per selected group.
+3. ``per_group`` -- One CSV/Excel file per selected group, each containing
+   its direct datasets.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
@@ -19,9 +21,11 @@ import pandas as pd
 
 ExportMode = Literal["side_by_side", "sheets", "per_group"]
 
+_INVALID_SHEET_CHARS = re.compile(r"[\\/*?:\[\]]")
+
 
 def _collect_datasets(group: h5py.Group) -> dict[str, np.ndarray]:
-    """Collect all dataset arrays in a group (non-recursive).
+    """Collect direct dataset arrays in a group.
 
     Returns:
         Dict mapping dataset name to its numpy array.
@@ -34,25 +38,110 @@ def _collect_datasets(group: h5py.Group) -> dict[str, np.ndarray]:
     return datasets
 
 
-def _build_dataframe(datasets: dict[str, np.ndarray]) -> pd.DataFrame:
-    """Build a DataFrame from named datasets, padding shorter columns with NaN.
+def _collect_selected_datasets(
+    h5file: h5py.File, group_paths: Sequence[str]
+) -> dict[str, np.ndarray]:
+    """Collect datasets recursively, keyed by their full HDF5 path.
 
-    Each dataset becomes a column. Columns of different lengths are padded.
+    If both a parent group and one of its descendants are selected, the
+    dataset is still returned only once.
     """
+    datasets: dict[str, np.ndarray] = {}
+    visited: set[str] = set()
+
+    def walk(group: h5py.Group) -> None:
+        for name in sorted(group.keys()):
+            item = group[name]
+            if isinstance(item, h5py.Dataset):
+                if item.name in visited:
+                    continue
+                visited.add(item.name)
+                datasets[_path_to_name(item.name)] = item[:]
+            elif isinstance(item, h5py.Group):
+                walk(item)
+
+    for group_path in group_paths:
+        walk(h5file[group_path])
+    return datasets
+
+
+def _path_to_name(path: str) -> str:
+    """Convert an absolute HDF5 path into a flat output name."""
+    return path.strip("/").replace("/", "_") or "root"
+
+
+def _build_dataframe(datasets: dict[str, np.ndarray]) -> pd.DataFrame:
+    """Build a DataFrame from named datasets, padding shorter columns."""
     if not datasets:
         return pd.DataFrame()
-    max_len = max(len(v) for v in datasets.values())
-    data = {}
-    for name, arr in datasets.items():
+
+    normalised = {
+        name: np.asarray(arr).reshape(1) if np.asarray(arr).ndim == 0 else arr
+        for name, arr in datasets.items()
+    }
+    max_len = max(len(value) for value in normalised.values())
+    data: dict[str, np.ndarray] = {}
+    used_columns: set[str] = set()
+
+    for name, arr in normalised.items():
         if arr.ndim == 1:
-            data[name] = np.pad(arr, (0, max_len - len(arr)), constant_values=np.nan)
+            column_name = _unique_name(name, used_columns)
+            data[column_name] = np.pad(
+                arr, (0, max_len - len(arr)), constant_values=np.nan
+            )
         else:
             for col_idx in range(arr.shape[1]):
-                col_name = f"{name}[{col_idx}]" if arr.shape[1] > 1 else name
+                base_name = f"{name}[{col_idx}]" if arr.shape[1] > 1 else name
+                column_name = _unique_name(base_name, used_columns)
                 col = arr[:, col_idx]
                 padding = max_len - len(col)
-                data[col_name] = np.pad(col, (0, padding), constant_values=np.nan)
+                data[column_name] = np.pad(
+                    col, (0, padding), constant_values=np.nan
+                )
     return pd.DataFrame(data)
+
+
+def _unique_name(name: str, used: set[str]) -> str:
+    """Return a deterministic name that does not collide with existing names."""
+    candidate = name
+    index = 2
+    while candidate in used:
+        candidate = f"{name}_{index}"
+        index += 1
+    used.add(candidate)
+    return candidate
+
+
+def _normalise_filename(filename: str, suffix: str) -> str:
+    """Keep an output filename inside the configured output directory."""
+    safe_name = Path(filename.strip()).name
+    if safe_name in {"", ".", ".."}:
+        safe_name = f"export{suffix}"
+    if Path(safe_name).suffix.lower() != suffix:
+        safe_name = f"{safe_name}{suffix}"
+    return safe_name
+
+
+def _group_filename(group_path: str, suffix: str) -> str:
+    """Build the automatic filename used by ``per_group``."""
+    return f"{_path_to_name(group_path)}{suffix}"
+
+
+def _unique_sheet_name(name: str, used: set[str]) -> str:
+    """Create a valid, unique Excel sheet name from a dataset path."""
+    base = _INVALID_SHEET_CHARS.sub("_", name).strip() or "dataset"
+    base = base[:31]
+    candidate = base
+    index = 2
+    while candidate in used:
+        suffix = f"_{index}"
+        candidate = f"{base[: 31 - len(suffix)]}{suffix}"
+        index += 1
+    used.add(candidate)
+    return candidate
+
+
+
 
 
 def export_csv(
@@ -60,48 +149,37 @@ def export_csv(
     group_paths: Sequence[str],
     mode: ExportMode,
     output_dir: str | Path,
+    output_name: str = "export.csv",
 ) -> list[Path]:
     """Export groups to CSV.
 
-    Args:
-        h5file: An open h5py File in ``r`` mode.
-        group_paths: List of absolute HDF5 group paths to export.
-        mode: Export layout.
-        output_dir: Directory to write output files.
-
-    Returns:
-        List of created file paths.
+    ``side_by_side`` writes one combined CSV using all selected datasets.
+    ``per_group`` writes one CSV per selected group using direct datasets.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    created: list[Path] = []
 
-    if mode == "side_by_side":
-        for gpath in group_paths:
-            datasets = _collect_datasets(h5file[gpath])
-            df = _build_dataframe(datasets)
-            if not df.empty:
-                name = gpath.strip("/").replace("/", "_") or "root"
-                path = output_dir / f"{name}.csv"
-                df.to_csv(path, index=False)
-                created.append(path)
-
-    elif mode == "per_group":
-        for gpath in group_paths:
-            datasets = _collect_datasets(h5file[gpath])
-            df = _build_dataframe(datasets)
-            if not df.empty:
-                name = gpath.strip("/").replace("/", "_") or "root"
-                path = output_dir / f"{name}.csv"
-                df.to_csv(path, index=False)
-                created.append(path)
-
-    elif mode == "sheets":
+    if mode == "sheets":
         raise NotImplementedError(
-            "CSV does not support multi-sheet output. Use mode='side_by_side' "
-            "or mode='per_group', or export_xlsx for sheets mode."
+            "CSV does not support one sheet per group. Use Excel for sheets mode."
         )
 
+    if mode == "side_by_side":
+        dataframe = _build_dataframe(_collect_selected_datasets(h5file, group_paths))
+        if dataframe.empty:
+            return []
+        path = output_dir / _normalise_filename(output_name, ".csv")
+        dataframe.to_csv(path, index=False)
+        return [path]
+
+    created: list[Path] = []
+    for group_path in group_paths:
+        dataframe = _build_dataframe(_collect_datasets(h5file[group_path]))
+        if dataframe.empty:
+            continue
+        path = output_dir / _group_filename(group_path, ".csv")
+        dataframe.to_csv(path, index=False)
+        created.append(path)
     return created
 
 
@@ -114,65 +192,47 @@ def export_xlsx(
 ) -> list[Path]:
     """Export groups to Excel (.xlsx).
 
-    Args:
-        h5file: An open h5py File in ``r`` mode.
-        group_paths: List of absolute HDF5 group paths to export.
-        mode: Export layout.
-        output_dir: Directory to write output files.
-        workbook_name: Filename for ``sheets`` and ``side_by_side`` modes
-            (when writing a single workbook).
-
-    Returns:
-        List of created file paths.
+    ``side_by_side`` writes one worksheet containing all selected datasets.
+    ``sheets`` writes one worksheet per selected group, with its direct
+    datasets as columns. ``per_group`` keeps one workbook per selected
+    group with its direct datasets as columns.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    created: list[Path] = []
+    workbook_name = _normalise_filename(workbook_name, ".xlsx")
 
     if mode == "side_by_side":
-        sheets: dict[str, pd.DataFrame] = {}
-        for gpath in group_paths:
-            datasets = _collect_datasets(h5file[gpath])
-            df = _build_dataframe(datasets)
-            if not df.empty:
-                name = gpath.strip("/").replace("/", "_") or "root"
-                sheets[name[:31]] = df  # Excel sheet names max 31 chars
+        dataframe = _build_dataframe(_collect_selected_datasets(h5file, group_paths))
+        if dataframe.empty:
+            return []
+        path = output_dir / workbook_name
+        dataframe.to_excel(path, sheet_name="data", index=False)
+        return [path]
 
-        if sheets:
-            path = output_dir / workbook_name
-            with pd.ExcelWriter(path, engine="openpyxl") as writer:
-                for sheet_name, df in sheets.items():
-                    df.to_excel(writer, sheet_name=sheet_name, index=False)
-            created.append(path)
+    if mode == "sheets":
+        used_sheet_names: set[str] = set()
+        has_data = False
+        path = output_dir / workbook_name
+        with pd.ExcelWriter(path, engine="openpyxl") as writer:
+            for group_path in group_paths:
+                datasets = _collect_datasets(h5file[group_path])
+                if not datasets:
+                    continue
+                has_data = True
+                sheet_name = _unique_sheet_name(
+                    _path_to_name(group_path), used_sheet_names
+                )
+                _build_dataframe(datasets).to_excel(
+                    writer, sheet_name=sheet_name, index=False
+                )
+        return [path] if has_data else []
 
-    elif mode == "sheets":
-        for gpath in group_paths:
-            datasets = _collect_datasets(h5file[gpath])
-            df = _build_dataframe(datasets)
-            if not df.empty:
-                name = gpath.strip("/").replace("/", "_") or "root"
-                path = output_dir / f"{name}.xlsx"
-                with pd.ExcelWriter(path, engine="openpyxl") as writer:
-                    for dset_name, arr in datasets.items():
-                        sheet_name = dset_name[:31]
-                        if arr.ndim == 1:
-                            pd.DataFrame(arr).to_excel(
-                                writer, sheet_name=sheet_name, index=False
-                            )
-                        else:
-                            pd.DataFrame(arr).to_excel(
-                                writer, sheet_name=sheet_name, index=False
-                            )
-                created.append(path)
-
-    elif mode == "per_group":
-        for gpath in group_paths:
-            datasets = _collect_datasets(h5file[gpath])
-            df = _build_dataframe(datasets)
-            if not df.empty:
-                name = gpath.strip("/").replace("/", "_") or "root"
-                path = output_dir / f"{name}.xlsx"
-                df.to_excel(path, index=False)
-                created.append(path)
-
+    created: list[Path] = []
+    for group_path in group_paths:
+        dataframe = _build_dataframe(_collect_datasets(h5file[group_path]))
+        if dataframe.empty:
+            continue
+        path = output_dir / _group_filename(group_path, ".xlsx")
+        dataframe.to_excel(path, index=False)
+        created.append(path)
     return created

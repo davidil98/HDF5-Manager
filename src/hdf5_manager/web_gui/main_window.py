@@ -1,5 +1,7 @@
 """Main window with tabbed interface: Viewer | Editor | Merger | Export."""
 
+from pathlib import Path
+
 from nicegui import app, ui
 
 from hdf5_manager.core.operations import default_output_path
@@ -59,6 +61,14 @@ def _build_toolbar() -> None:
             app.storage.user["pending_changes"] = []
             app.storage.user["selected_node"] = None
             app.storage.user["pending_merges"] = []
+            app.storage.user["merger_selected_source"] = None
+            app.storage.user["export_selected_groups"] = []
+            app.storage.user["export_available_groups"] = []
+            source = Path(src)
+            app.storage.user["export_output_dir"] = str(
+                source.parent / f"{source.stem}-export"
+            )
+            app.storage.user["export_output_name"] = f"{source.stem}-export.csv"
             create_viewer_tab.refresh()
             create_editor_tab.refresh()
             create_merger_tab.refresh()

@@ -16,13 +16,17 @@ incluye sus datasets y subgrupos; los datasets no son arrastrables.
 
 - La columna izquierda muestra las tarjetas del source.
 - La columna derecha muestra el destination y sus grupos como tarjetas.
-- Un selector elige el grupo destination que recibira la copia.
-- Cada tarjeta de grupo y subgroup tiene un boton `Add`.
+- Un click en una tarjeta de grupo destination preselecciona el grupo que
+  recibira la copia y lo marca visualmente; el destino seleccionado tambien se
+  muestra en un label.
+- Un click en una tarjeta de grupo source la preselecciona y muestra su ruta;
+  cada tarjeta conserva un boton `Add` para confirmar la copia.
 - Un click en `Add` crea un registro en `pending_merges`.
-- El destination se reconstruye virtualmente despues de cada drop.
+- El destination se reconstruye virtualmente despues de cada `Add`.
 - Source permanece visible porque el merge es una copia, no un move.
 - `Restore` elimina todos los movimientos pendientes.
-- Cada movimiento puede eliminarse individualmente.
+- Cada movimiento puede eliminarse individualmente desde el panel pending o
+  desde el boton de la tarjeta marcada como `pending`.
 - `Apply` reemplaza el output solo despues de confirmar si ya existe.
 
 ## Estado
@@ -32,6 +36,7 @@ El merger usa claves separadas en `app.storage.user`:
 - `h5_path` como source global, compartido con Viewer y Editor
 - `merger_dest_path`
 - `merger_dest_parent`
+- `merger_selected_source`
 - `merger_output_path`
 - `pending_merges`
 
@@ -57,10 +62,10 @@ zona de drop. Cada movimiento refrescaba todo el tablero y recreaba controllers
 Vue despues de inicializar el cliente. En native mode esto producia latencia,
 desincronizaciones y reinicios.
 
-El Merger usa ahora tarjetas estaticas y botones `Add`. No necesita SortableJS,
-import maps ni JavaScript custom. Esto permite que cualquier subgroup sea
-seleccionable sin crear zonas de drop anidadas. Los datasets son filas normales
-y no se copian individualmente.
+El Merger usa ahora tarjetas estaticas, seleccion por click y botones `Add`. No
+necesita SortableJS, import maps ni JavaScript custom. Esto permite que
+cualquier subgroup sea seleccionable sin crear zonas de drop anidadas. Los
+datasets son filas normales y no se copian individualmente.
 
 ## Core y seguridad
 
@@ -78,7 +83,8 @@ overwrite del archivo de salida es una decision independiente.
 
 ## Limitaciones conocidas
 
-- No hay drag and drop en esta version; la operacion se inicia con `Add`.
+- No hay drag and drop en esta version; la operacion se inicia seleccionando el
+  destino, seleccionando el source y pulsando `Add`.
 - Los grupos importados en preview no son zonas de drop.
 - No se permite copiar datasets individualmente.
 - No hay reorder persistente: el arbol del proyecto ordena nombres

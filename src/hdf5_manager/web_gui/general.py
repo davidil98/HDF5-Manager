@@ -29,6 +29,7 @@ class LocalFilePicker(ui.dialog):
         upper_limit: str | None = ...,
         multiple: bool = False,
         show_hidden_files: bool = False,
+        select_directory: bool = False,
     ) -> None:
         """Initialize the file picker.
 
@@ -38,6 +39,8 @@ class LocalFilePicker(ui.dialog):
                 (None = no limit, ... = same as starting directory).
             multiple: Allow multi-select.
             show_hidden_files: Include dotfiles.
+            select_directory: Return the currently browsed directory instead
+                of selecting a file.
         """
         super().__init__()
 
@@ -49,6 +52,7 @@ class LocalFilePicker(ui.dialog):
                 directory if upper_limit is ... else upper_limit
             ).expanduser()
         self.show_hidden_files = show_hidden_files
+        self.select_directory = select_directory
 
         with self, ui.card():
             self.add_drives_toggle()
@@ -65,7 +69,10 @@ class LocalFilePicker(ui.dialog):
             )
             with ui.row().classes("w-full justify-end"):
                 ui.button("Cancel", on_click=self.close).props("outline")
-                ui.button("Ok", on_click=self._handle_ok)
+                if self.select_directory:
+                    ui.button("Select this folder", on_click=self._select_directory)
+                else:
+                    ui.button("Ok", on_click=self._handle_ok)
         self.update_grid()
 
     def add_drives_toggle(self) -> None:
@@ -129,3 +136,7 @@ class LocalFilePicker(ui.dialog):
         """Submit selected rows from the AG Grid."""
         rows = await self.grid.get_selected_rows()
         self.submit([r["path"] for r in rows])
+
+    def _select_directory(self) -> None:
+        """Submit the directory currently shown by the picker."""
+        self.submit([str(self.path)])
