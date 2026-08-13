@@ -1,15 +1,9 @@
 [project]
 name = "hdf5-manager"
-version = "0.1.0"
+version = "0.1.2"
 description = "HDF5 file viewer, editor, merger and exporter"
 requires-python = ">=3.10"
-dependencies = [
-    "nicegui",
-    "h5py",
-    "pandas",
-    "openpyxl",
-    "numpy",
-]
+dependencies = ["nicegui", "h5py", "pandas", "openpyxl", "numpy"]
 
 [project.scripts]
 hdf5-manager = "hdf5_manager:main"

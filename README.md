@@ -68,16 +68,9 @@ Linux/macOS users with conda:
 ./run.sh
 ```
 
-For native mode (desktop window instead of browser), install the GUI
-extras first:
-
-```bash
-pip install -e ".[gui]"      # pip users
-# or, already covered by environment.yml for conda users (pywebview[qt])
-```
-
-Then launch with native mode (edit `__init__.py` to set `native=True`
-or pass it explicitly).
+The app opens in your **default browser** (Edge or Chrome on Windows) — no
+extra dependencies needed. Native desktop-window mode (`native=True`) is
+planned for a future release via a `[gui]` optional install.
 
 Or build a standalone `.exe` for distribution:
 

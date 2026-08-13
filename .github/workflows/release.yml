@@ -22,7 +22,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-          pip install nicegui-pack pyinstaller pywebview[qt]
+          pip install pyinstaller pywebview[qt]
+          pip install "nicegui[pack]"
           
       - name: Build EXE
         run: nicegui-pack --onefile --name "HDF5-Manager" main.py
