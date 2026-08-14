@@ -76,6 +76,7 @@ def _ensure_state() -> None:
         "merger_selected_source": None,
         "merger_output_path": None,
         "pending_merges": [],
+        "merger_checked_sources": [],
     }
     for key, value in defaults.items():
         if key not in app.storage.user:
@@ -113,24 +114,57 @@ def _build_source_board() -> None:
     """Render all source groups as cards, including draggable-depth controls."""
     source_path = app.storage.user.get("h5_path")
     selected = app.storage.user.get("merger_selected_source")
-    ui.label("Source groups").classes("text-subtitle1")
+    checked_count = len(app.storage.user.get("merger_checked_sources", []))
+
+    with ui.row().classes("w-full items-center justify-between"):
+        ui.label("Source groups").classes("text-subtitle1")
+        if checked_count > 0:
+            ui.label(f"{checked_count} item(s) selected").classes(
+                "text-caption text-primary font-bold"
+            )
     ui.label(f"Selected source group: {selected or '(none)'}").classes(
         "text-caption"
     )
-    with ui.column().classes(
-        "w-full min-h-[100px] gap-2 p-2 bg-grey-2 rounded"
-    ):
-        if not source_path or not os.path.isfile(source_path):
+    
+    if not source_path or not os.path.isfile(source_path):
+        with ui.column().classes(
+            "w-full min-h-[100px] gap-2 p-2 bg-grey-2 rounded"
+        ):
             ui.label("(no source file selected)").classes("text-grey text-sm p-2")
-            return
-        try:
-            with h5py.File(source_path, "r") as source:
-                source_tree = build_tree(source)
-        except OSError as error:
+        return
+        
+    try:
+        with h5py.File(source_path, "r") as source:
+            source_tree = build_tree(source)
+    except OSError as error:
+        with ui.column().classes(
+            "w-full min-h-[100px] gap-2 p-2 bg-grey-2 rounded"
+        ):
             ui.label(f"Could not read source: {error}").classes(
                 "text-negative text-sm p-2"
             )
-            return
+        return
+
+    with ui.row().classes("w-full items-center gap-2 mb-2 flex-wrap"):
+        ui.button(
+            "Queue Selected",
+            icon="add",
+            on_click=_queue_selected_merges,
+        ).props("dense color=primary")
+        ui.button(
+            "Select all",
+            icon="select_all",
+            on_click=lambda: _select_all_sources(source_tree),
+        ).props("flat dense")
+        ui.button(
+            "Clear all",
+            icon="clear_all",
+            on_click=_clear_sources,
+        ).props("flat dense")
+
+    with ui.column().classes(
+        "w-full min-h-[100px] gap-2 p-2 bg-grey-2 rounded"
+    ):
         groups = [node for node in source_tree if node.get("type") == "group"]
         if not groups:
             ui.label("(source has no groups)").classes("text-grey text-sm p-2")
@@ -141,21 +175,32 @@ def _build_source_board() -> None:
 
 def _render_source_group_card(node: dict[str, Any]) -> None:
     """Render a source group card recursively with an Add action."""
-    selected = node.get("id") == app.storage.user.get("merger_selected_source")
+    node_id = node["id"]
+    selected = node_id == app.storage.user.get("merger_selected_source")
+    checked_sources = set(app.storage.user.get("merger_checked_sources", []))
+    is_checked = node_id in checked_sources
+
+    def _toggle(val: bool) -> None:
+        current = set(app.storage.user.get("merger_checked_sources", []))
+        if val:
+            current.add(node_id)
+        else:
+            current.discard(node_id)
+        app.storage.user["merger_checked_sources"] = list(current)
+        _build_source_board.refresh()
+
     card_classes = "w-full bg-white"
     if selected:
+        card_classes += " ring-2 ring-primary"
+    if is_checked:
         card_classes += " border-2 border-primary"
     with ui.card().classes(card_classes):
         with ui.row().classes("w-full items-center gap-2 cursor-pointer").on(
             "click", lambda path=node["id"]: _on_source_select(path)
         ):
+            ui.checkbox(value=is_checked, on_change=lambda e: _toggle(e.value)).props("dense").on("click.stop", lambda: None)
             ui.icon("folder").classes("text-amber")
             ui.label(node["label"]).classes("font-bold grow")
-            ui.button(
-                "Add",
-                icon="add",
-                on_click=lambda path=node["id"]: _queue_merge(path),
-            ).props("dense color=primary")
         with ui.column().classes("w-full gap-1 pl-5"):
             for child in node.get("children", []):
                 if child.get("type") == "group":
@@ -315,23 +360,38 @@ def _build_action_buttons() -> None:
         ui.button("Apply", icon="save", on_click=_apply_merges).props("color=primary")
 
 
-def _queue_merge(source_path: str) -> None:
-    """Validate and append one source group copy for the selected target."""
+def _queue_selected_merges() -> None:
+    """Queue all currently checked source items for copying."""
+    checked = list(app.storage.user.get("merger_checked_sources", []))
+    if not checked:
+        ui.notify("No items selected. Check one or more items first.", type="warning")
+        return
     source_file = app.storage.user.get("h5_path")
     destination_file = app.storage.user.get("merger_dest_path")
     dest_parent = app.storage.user.get("merger_dest_parent") or "/"
     if not source_file or not destination_file:
         ui.notify("Choose both files first", type="warning")
         return
+
     pending = list(app.storage.user.get("pending_merges", []))
-    pending.append(
-        {
-            "source_file": source_file,
-            "source_path": source_path,
-            "dest_file": destination_file,
-            "dest_parent": dest_parent,
-        }
-    )
+    added_count = 0
+    for source_path in checked:
+        if any(
+            m.get("source_path") == source_path
+            and (m.get("dest_parent") or "/") == dest_parent
+            for m in pending
+        ):
+            continue
+        pending.append(
+            {
+                "source_file": source_file,
+                "source_path": source_path,
+                "dest_file": destination_file,
+                "dest_parent": dest_parent,
+            }
+        )
+        added_count += 1
+
     try:
         source_tree, destination_tree = _read_merger_trees(
             source_file, destination_file
@@ -340,10 +400,35 @@ def _queue_merge(source_path: str) -> None:
     except (OSError, ValueError) as error:
         ui.notify(f"Merge not queued: {error}", type="negative")
         return
+    
     app.storage.user["pending_merges"] = pending
+    app.storage.user["merger_checked_sources"] = []
+    _build_source_board.refresh()
     _build_destination_board.refresh()
     _build_pending_panel.refresh()
-    ui.notify(f"Queued {source_path} -> {dest_parent}", type="positive")
+    ui.notify(f"Queued {added_count} item(s) -> {dest_parent}", type="positive")
+
+
+def _select_all_sources(tree_nodes: list[dict[str, Any]]) -> None:
+    """Select all source groups."""
+    all_ids: list[str] = []
+
+    def _collect(nodes: list[dict[str, Any]]) -> None:
+        for n in nodes:
+            if n.get("type") == "group":
+                all_ids.append(n["id"])
+            if n.get("children"):
+                _collect(n["children"])
+
+    _collect(tree_nodes)
+    app.storage.user["merger_checked_sources"] = all_ids
+    _build_source_board.refresh()
+
+
+def _clear_sources() -> None:
+    """Clear all checked source items."""
+    app.storage.user["merger_checked_sources"] = []
+    _build_source_board.refresh()
 
 
 def _remove_merge(index: int) -> None:
@@ -388,11 +473,13 @@ def _merge_destination_path(source_path: str, dest_parent: str) -> str:
 def _restore_merges() -> None:
     """Clear the virtual merge plan."""
     app.storage.user["pending_merges"] = []
+    app.storage.user["merger_checked_sources"] = []
     if not _destination_group_exists(
         app.storage.user.get("merger_dest_parent") or "/"
     ):
         app.storage.user["merger_dest_parent"] = "/"
         _build_file_controls.refresh()
+    _build_source_board.refresh()
     _build_destination_board.refresh()
     _build_pending_panel.refresh()
     ui.notify("Pending merges cleared")
@@ -472,6 +559,8 @@ def _do_apply(output: str, pending: list[dict[str, Any]]) -> None:
         ui.notify(f"Apply failed: {error}", type="negative")
         return
     app.storage.user["pending_merges"] = []
+    app.storage.user["merger_checked_sources"] = []
+    _build_source_board.refresh()
     _build_destination_board.refresh()
     _build_pending_panel.refresh()
     ui.notify(f"Applied {len(pending)} merge(s) to {output}", type="positive")
@@ -493,6 +582,7 @@ async def _pick_destination() -> None:
     app.storage.user["merger_dest_path"] = files[0]
     app.storage.user["merger_dest_parent"] = "/"
     app.storage.user["pending_merges"] = []
+    app.storage.user["merger_checked_sources"] = []
     app.storage.user["merger_output_path"] = default_merge_output_path(files[0])
     create_merger_tab.refresh()
 
