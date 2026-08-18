@@ -11,7 +11,10 @@ from nicegui import app, ui
 
 from hdf5_manager.core.export import ExportMode, export_csv, export_xlsx
 from hdf5_manager.core.tree import build_tree
-from hdf5_manager.web_gui.general import LocalFilePicker
+from hdf5_manager.web_gui.general import (
+    pick_directory,
+    picker_start_directory as _picker_start_directory,
+)
 
 _NO_FILE = "No file selected"
 
@@ -330,34 +333,10 @@ def _available_layout_options(output_format: str) -> dict[ExportMode, str]:
     }
 
 
-def _picker_start_directory(path: str) -> str:
-    """Choose an existing directory from which the picker should start."""
-    candidate = Path(path).expanduser() if path else Path.home()
-    if candidate.is_dir():
-        return str(candidate)
-    if candidate.parent.is_dir():
-        return str(candidate.parent)
-    return str(Path.home())
-
-
 async def _pick_output_directory() -> None:
-    """Open a native or browser-based directory picker for export output."""
+    """Open the shared native/web directory picker for export output."""
     current = app.storage.user.get("export_output_dir", "")
-    start_directory = _picker_start_directory(current)
-
-    if app.native.main_window:
-        import webview
-
-        paths = await app.native.main_window.create_file_dialog(
-            dialog_type=webview.FileDialog.FOLDER,
-            directory=start_directory,
-        )
-    else:
-        picker = LocalFilePicker(
-            directory=start_directory,
-            select_directory=True,
-        )
-        paths = await picker
+    paths = await pick_directory(directory=picker_start_directory(current))
 
     if paths:
         app.storage.user["export_output_dir"] = str(paths[0])

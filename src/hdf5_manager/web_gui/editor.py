@@ -25,6 +25,7 @@ from nicegui import app, ui
 
 from hdf5_manager.core.operations import apply_changes, default_output_path
 from hdf5_manager.core.tree import build_tree
+from hdf5_manager.web_gui.general import pick_save_file
 
 # ── Tree virtual helpers (pure functions on dict structure) ────────
 
@@ -434,17 +435,16 @@ def _do_apply(source: str, output: str, pending: list[dict[str, Any]]) -> None:
 
 
 def _pick_output_path() -> None:
-    """Open the file picker (hybrid native/browser) and store result."""
-    from hdf5_manager.web_gui.general import LocalFilePicker
+    """Open the shared save dialog and store the selected result."""
 
     async def _pick() -> None:
-        if app.native.main_window:
-            files = await app.native.main_window.create_file_dialog(
-                allow_multiple=False,
-                file_types=("HDF5 files (*.h5;*.hdf5)", "All files (*.*)"),
-            )
-        else:
-            files = await LocalFilePicker(directory="~", multiple=False)
+        output = app.storage.user.get("output_path") or ""
+        files = await pick_save_file(
+            path=output,
+            save_filename=os.path.basename(output),
+            file_types=("HDF5 files (*.h5;*.hdf5)", "All files (*.*)"),
+            extensions=(".h5", ".hdf5"),
+        )
         if files:
             app.storage.user["output_path"] = files[0]
 

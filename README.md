@@ -46,44 +46,47 @@ pip install hdf5-manager
 ### Development
 
 ```bash
-python main.py        # Hot-reload, browser mode
-hdf5-manager          # No reload, browser mode (from console script)
+python main.py                    # Development profile, reload enabled
+hdf5-manager --mode web           # Production profile, browser mode
+hdf5-manager --mode native        # Require native mode
+hdf5-manager --mode auto          # Native first, web fallback
 ```
 
-Both commands work in browser mode (default for development).
-`python main.py` enables hot-reload — saving any `.py` reloads the page.
+`python main.py` is intentionally independent from the distribution profile.
+Its `DEV_NATIVE` and `DEV_RELOAD` constants can be changed when developing.
+The `hdf5-manager` console script always uses `reload=False`.
 
 ### End-user distribution
 
-Windows users with conda, double-click `run.bat` or from Anaconda Prompt:
+Windows users with conda can double-click `run.bat` or run it from Anaconda
+Prompt:
 
 ```batch
 conda activate hdf5_manager
 hdf5-manager
 ```
 
-Linux/macOS users with conda:
+The production launcher tries to open a native pywebview window first. If the
+native preflight fails, it falls back to the local web browser. Use
+`hdf5-manager --mode web` to force browser mode or `--mode native` to require
+the native window.
+
+Linux/macOS users with conda can use:
 
 ```bash
 ./run.sh
 ```
 
-The app opens in your **default browser** (Edge or Chrome on Windows) — no
-extra dependencies needed. Native desktop-window mode (`native=True`) is
-planned for a future release via a `[gui]` optional install.
+The `run.sh` launcher uses the same native-first production profile.
 
 Or build a standalone `.exe` for distribution:
 
 ```bash
-nicegui-pack --onefile --name "HDF5-Manager" main.py
+nicegui-pack --onefile --name "HDF5-Manager" packaged_main.py
 ```
 
-> **Linux note:** native mode is **fully working on Fedora** (tested
-> with PyQt6-WebEngine). Ubuntu/Debian users may have a smoother
-> experience because `apt` provides `libwebkit2gtk` and `python3-gi`
-> packages out of the box, so the GTK backend of pywebview is usable
-> without extra steps. On Fedora, pywebview falls through to Qt6
-> because the system ships Gtk 4 only. See `AGENTS.md` for details.
+The executable uses the same production launcher as `hdf5-manager` and always
+uses `reload=False`.
 
 ## Development
 
@@ -111,9 +114,10 @@ from core, never the reverse.
 
 | Command              | File                        | reload | native |
 |----------------------|-----------------------------|--------|--------|
-| `python main.py`     | `main.py`                   | True   | False  |
-| `hdf5-manager`       | `src/hdf5_manager/__init__.py` | False  | False  |
-| `run.bat` / `run.sh` | (user scripts)              | False  | True   |
+| `python main.py`     | `main.py`                   | True   | Configurable |
+| `hdf5-manager`       | `src/hdf5_manager/__init__.py` | False  | Auto |
+| `.exe`               | `packaged_main.py`          | False  | Auto |
+| `run.bat` / `run.sh` | (production launchers)      | False  | Auto |
 
 ## Distribution
 

@@ -30,5 +30,5 @@ if ! conda activate hdf5_manager 2>/dev/null; then
     exit 1
 fi
 
-# Launch the application via its console script entry point.
-hdf5-manager
+# Launch the production profile via the console script entry point.
+hdf5-manager --mode auto

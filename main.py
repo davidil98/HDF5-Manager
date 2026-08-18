@@ -1,14 +1,15 @@
-"""HDF5 Manager — standalone desktop application.
+"""HDF5 Manager development entry point.
 
 Usage:
-    python main.py          # End-user / packaged .exe entry point
-    hdf5-manager            # Dev entry (console script, same behaviour)
+    python main.py          # Development profile with reload enabled
 
-Note: native=False opens the app in the system browser (Edge/Chrome on
-Windows). No pywebview dependency required. Set native=True only after
-installing the [gui] extras (pywebview[qt]).
+Edit ``DEV_NATIVE`` to develop in a native window. Distribution uses the
+separate production profile from ``hdf5_manager.launcher``.
 """
+
 import sys
+
+
 # Native mode needs freeze_support on Windows when packaged.
 # Debe ser la PRIMERA llamada en el proceso principal.
 if sys.platform == "win32":
@@ -20,16 +21,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from nicegui import ui
+from hdf5_manager.launcher import run_development
 
-import hdf5_manager.web_gui.main_window as _ 
+DEV_NATIVE = True
+DEV_RELOAD = True
 
 if __name__ in {"__main__", "__mp_main__"}:
-    
-    ui.run(
-        title="HDF5 Manager",
-        favicon="📊",
-        native=False,   # browser mode — no pywebview needed; works on all OS
-        reload=False,   # must be False in packaged .exe and console scripts
-        storage_secret="hdf5-manager-secret",
-    )
+    run_development(native=DEV_NATIVE, reload=DEV_RELOAD)

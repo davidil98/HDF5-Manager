@@ -7,7 +7,7 @@ from nicegui import app, ui
 from hdf5_manager.core.operations import default_output_path
 from hdf5_manager.web_gui.editor import create_editor_tab
 from hdf5_manager.web_gui.exporter import create_exporter_tab
-from hdf5_manager.web_gui.general import LocalFilePicker
+from hdf5_manager.web_gui.general import pick_file
 from hdf5_manager.web_gui.merger import create_merger_tab
 from hdf5_manager.web_gui.viewer import create_viewer_tab
 
@@ -31,37 +31,24 @@ def _build_toolbar() -> None:
     app.storage.user["h5_path"] = "No file selected"
 
     async def _pick_file() -> None:
-        """File picker híbrido — native o browser según el runtime.
-
-        En modo nativo (``ui.run(native=True)``) usa
-        ``app.native.main_window.create_file_dialog``, que invoca el
-        file dialog del sistema operativo a través de pywebview.
-
-        En modo navegador usa ``local_file_picker``, un diálogo web
-        que emula un explorador de archivos dentro de la UI sin
-        necesidad de pywebview.
-        """
-        if app.native.main_window:
-            # Modo nativo: diálogo del SO, filtra extensiones .h5
-            files = await app.native.main_window.create_file_dialog(
-                allow_multiple=False,
-                file_types=("HDF5 files (*.h5;*.hdf5)", "All files (*.*)"),
-            )
-        else:
-            # Modo navegador: explorador web genérico (sin filtro de extensiones).
-            # '~' es el home del usuario como directorio inicial.
-            # La llamada devuelve una lista (ej: ['/home/user/datos.h5']) o None.
-            files = await LocalFilePicker(directory="~", multiple=False)
-            ui.notify(f"You selected {files[0]}")
+        """Open the shared native/web source file picker."""
+        files = await pick_file(
+            directory="~",
+            multiple=False,
+            file_types=("HDF5 files (*.h5;*.hdf5)", "All files (*.*)"),
+            extensions=(".h5", ".hdf5"),
+        )
 
         if files:
             src = files[0]
+            ui.notify(f"You selected {src}")
             app.storage.user["h5_path"] = src
             app.storage.user["output_path"] = default_output_path(src)
             app.storage.user["pending_changes"] = []
             app.storage.user["selected_node"] = None
             app.storage.user["pending_merges"] = []
             app.storage.user["merger_selected_source"] = None
+            app.storage.user["merger_selected_groups"] = []
             app.storage.user["export_selected_groups"] = []
             app.storage.user["export_available_groups"] = []
             source = Path(src)

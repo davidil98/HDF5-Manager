@@ -5,5 +5,5 @@ call conda activate hdf5_manager || (
     pause
     exit /b 1
 )
-python -m hdf5_manager
+python -m hdf5_manager --mode auto
 pause

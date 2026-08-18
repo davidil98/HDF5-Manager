@@ -9,7 +9,11 @@ import tempfile
 import h5py
 import numpy as np
 
-from hdf5_manager.core.merge import apply_virtual_merges
+from hdf5_manager.core.merge import (
+    apply_virtual_merges,
+    minimal_group_selection,
+    plan_virtual_merges,
+)
 from hdf5_manager.core.operations import (
     apply_changes,
     apply_merges,
@@ -165,6 +169,7 @@ def test_apply_merges_rejects_conflicts_before_output() -> None:
                 "source_path": "/group_b",
                 "dest_file": destination,
                 "dest_parent": "/",
+                "name": "group_b",
             }
         ]
         try:
@@ -216,6 +221,173 @@ def test_virtual_merges_rebase_copied_descendants() -> None:
     assert copied["children"][0]["id"] == "/target/source_group/data"
     assert copied["pending"] is True
     assert destination[0]["children"] == []
+
+
+def test_minimal_group_selection_removes_redundant_descendants() -> None:
+    """Selecting a parent makes selected descendants redundant."""
+    assert minimal_group_selection(["/a/b", "/a", "/other"]) == [
+        "/a",
+        "/other",
+    ]
+
+
+def test_virtual_merges_assign_unique_merged_names() -> None:
+    """Repeated source names receive deterministic virtual names."""
+    source = [
+        {
+            "id": "/group_a",
+            "label": "group_a",
+            "type": "group",
+            "children": [
+                {
+                    "id": "/group_a/run",
+                    "label": "run",
+                    "type": "group",
+                    "children": [],
+                }
+            ],
+        },
+        {
+            "id": "/group_b",
+            "label": "group_b",
+            "type": "group",
+            "children": [
+                {
+                    "id": "/group_b/run",
+                    "label": "run",
+                    "type": "group",
+                    "children": [],
+                }
+            ],
+        },
+    ]
+    destination = [
+        {
+            "id": "/target",
+            "label": "target",
+            "type": "group",
+            "children": [
+                {
+                    "id": "/target/run",
+                    "label": "run",
+                    "type": "group",
+                    "children": [],
+                }
+            ],
+        }
+    ]
+
+    virtual, planned = plan_virtual_merges(
+        destination,
+        source,
+        [
+            {"source_path": "/group_a/run", "dest_parent": "/target"},
+            {"source_path": "/group_b/run", "dest_parent": "/target"},
+        ],
+    )
+
+    assert [merge["name"] for merge in planned] == [
+        "run-merged",
+        "run-merged-2",
+    ]
+    target = virtual[0]
+    assert [child["id"] for child in target["children"]] == [
+        "/target/run",
+        "/target/run-merged",
+        "/target/run-merged-2",
+    ]
+    assert [child["label"] for child in target["children"]] == [
+        "run",
+        "run-merged",
+        "run-merged-2",
+    ]
+
+
+def test_virtual_merges_order_nested_destinations() -> None:
+    """A merge targeting a pending group is ordered after its parent."""
+    source = [
+        {
+            "id": "/parent",
+            "label": "parent",
+            "type": "group",
+            "children": [],
+        },
+        {
+            "id": "/child",
+            "label": "child",
+            "type": "group",
+            "children": [],
+        },
+    ]
+    destination = [
+        {
+            "id": "/target",
+            "label": "target",
+            "type": "group",
+            "children": [],
+        }
+    ]
+
+    virtual, planned = plan_virtual_merges(
+        destination,
+        source,
+        [
+            {"source_path": "/child", "dest_parent": "/target/parent"},
+            {"source_path": "/parent", "dest_parent": "/target"},
+        ],
+    )
+
+    assert [merge["source_path"] for merge in planned] == [
+        "/parent",
+        "/child",
+    ]
+    target = virtual[0]
+    parent = target["children"][0]
+    assert parent["id"] == "/target/parent"
+    assert parent["children"][0]["id"] == "/target/parent/child"
+
+
+def test_apply_merges_supports_nested_virtual_destinations() -> None:
+    """Nested pending destinations are applied in the temporary output."""
+    source = tempfile.NamedTemporaryFile(suffix=".h5", delete=False)
+    destination = tempfile.NamedTemporaryFile(suffix=".h5", delete=False)
+    source.close()
+    destination.close()
+    output_dir = tempfile.mkdtemp()
+    output = os.path.join(output_dir, "merged.h5")
+    try:
+        with h5py.File(source.name, "w") as source_file:
+            source_file.create_group("parent")
+            source_file.create_group("child")
+        with h5py.File(destination.name, "w") as destination_file:
+            destination_file.create_group("target")
+
+        apply_merges(
+            [
+                {
+                    "source_file": source.name,
+                    "source_path": "/child",
+                    "dest_file": destination.name,
+                    "dest_parent": "/target/parent",
+                },
+                {
+                    "source_file": source.name,
+                    "source_path": "/parent",
+                    "dest_file": destination.name,
+                    "dest_parent": "/target",
+                },
+            ],
+            output,
+        )
+
+        with h5py.File(output, "r") as merged:
+            assert "/target/parent" in merged
+            assert "/target/parent/child" in merged
+    finally:
+        os.unlink(source.name)
+        os.unlink(destination.name)
+        os.unlink(output)
+        os.rmdir(output_dir)
 
 
 def test_default_merge_output_path() -> None:

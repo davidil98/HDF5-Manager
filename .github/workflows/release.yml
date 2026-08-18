@@ -21,12 +21,16 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
-          pip install pyinstaller pywebview[qt]
+          pip install -e ".[gui]"
+          pip install pyinstaller
           pip install "nicegui[pack]"
-          
+          pip install pillow
+
+      - name: Prepare Windows icon
+        run: python scripts/prepare_windows_icon.py
+
       - name: Build EXE
-        run: nicegui-pack --onefile --name "HDF5-Manager" main.py
+        run: nicegui-pack --onefile --name "HDF5-Manager" --icon build/icon.ico packaged_main.py
           
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4

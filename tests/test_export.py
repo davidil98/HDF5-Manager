@@ -229,3 +229,94 @@ def test_export_csv_side_by_side_deduplicates_nested_group_selection() -> None:
         os.unlink(path)
         shutil.rmtree(output_dir, ignore_errors=True)
 
+
+def test_export_side_by_side_handles_mixed_integer_and_float_lengths() -> None:
+    """Side-by-side export must not fail when integer columns need padding."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".h5", delete=False)
+    tmp.close()
+    with h5py.File(tmp.name, "w") as f:
+        g1 = f.create_group("group_a")
+        g1.create_dataset("x", data=np.array([1, 2, 3], dtype=np.int32))
+        g1.create_dataset("y", data=np.array([10.0, 20.0, 30.0]))
+        g2 = f.create_group("group_b")
+        g2.create_dataset("x", data=np.array([4, 5], dtype=np.int32))
+        g2.create_dataset("y", data=np.array([40.0, 50.0, 60.0, 70.0]))
+    output_dir = tempfile.mkdtemp()
+    try:
+        with h5py.File(tmp.name, "r") as f:
+            files = export_csv(
+                f,
+                ["/group_a", "/group_b"],
+                mode="side_by_side",
+                output_dir=output_dir,
+                output_name="mixed.csv",
+            )
+        df = pd.read_csv(files[0])
+        assert len(df) == 4
+        # group_a_x has 3 values, so the 4th row should be empty (NA).
+        assert df["group_a_x"].isna().iloc[3]
+        assert df["group_a_x"].iloc[0] == 1
+    finally:
+        import os
+        import shutil
+
+        os.unlink(tmp.name)
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_xlsx_side_by_side_handles_mixed_integer_and_float_lengths() -> None:
+    """XLSX side-by-side export must not fail when integer columns need padding."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".h5", delete=False)
+    tmp.close()
+    with h5py.File(tmp.name, "w") as f:
+        g1 = f.create_group("group_a")
+        g1.create_dataset("x", data=np.array([1, 2], dtype=np.int32))
+        g1.create_dataset("y", data=np.array([10.0, 20.0, 30.0]))
+        g2 = f.create_group("group_b")
+        g2.create_dataset("x", data=np.array([4], dtype=np.int32))
+        g2.create_dataset("y", data=np.array([40.0, 50.0]))
+    output_dir = tempfile.mkdtemp()
+    try:
+        with h5py.File(tmp.name, "r") as f:
+            files = export_xlsx(
+                f,
+                ["/group_a", "/group_b"],
+                mode="side_by_side",
+                output_dir=output_dir,
+                workbook_name="mixed.xlsx",
+            )
+        df = pd.read_excel(files[0])
+        assert len(df) == 3
+    finally:
+        import os
+        import shutil
+
+        os.unlink(tmp.name)
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def test_export_side_by_side_with_real_measurement_file() -> None:
+    """The real measurement file must export without errors in all combined modes."""
+    test_file = Path(__file__).parent / "2026-08-12_V6.hdf5"
+    if not test_file.exists():
+        return
+    output_dir = Path(tempfile.mkdtemp())
+    try:
+        with h5py.File(test_file, "r") as f:
+            groups = [
+                obj.name for obj in f.values() if isinstance(obj, h5py.Group)
+            ]
+            assert len(groups) > 0
+            csv_files = export_csv(
+                f, groups, mode="side_by_side", output_dir=output_dir
+            )
+            assert len(csv_files) == 1
+            xlsx_files = export_xlsx(
+                f, groups, mode="side_by_side", output_dir=output_dir
+            )
+            assert len(xlsx_files) == 1
+    finally:
+        import shutil
+
+        shutil.rmtree(output_dir, ignore_errors=True)
+

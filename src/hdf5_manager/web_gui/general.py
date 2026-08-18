@@ -11,8 +11,101 @@ Usage as a standalone dialog:
 
 import platform
 from pathlib import Path
+from typing import Any
 
-from nicegui import events, ui
+from nicegui import app, events, ui
+
+
+def picker_start_directory(path: str | None) -> str:
+    """Return an existing directory suitable for starting a file dialog."""
+    candidate = Path(path).expanduser() if path else Path.home()
+    if candidate.is_dir():
+        return str(candidate)
+    for parent in candidate.parents:
+        if parent.is_dir():
+            return str(parent)
+    return str(Path.home())
+
+
+def _native_dialog_type(name: str, legacy_name: str) -> Any:
+    """Resolve a pywebview dialog enum across supported versions."""
+    import webview
+
+    file_dialog = getattr(webview, "FileDialog", None)
+    if file_dialog is not None and hasattr(file_dialog, name):
+        return getattr(file_dialog, name)
+    return getattr(webview, legacy_name)
+
+
+def _normalise_paths(paths: Any) -> list[str]:
+    """Normalize native tuples and web picker lists to a list of strings."""
+    return [str(path) for path in (paths or [])]
+
+
+async def pick_file(
+    *,
+    directory: str = "~",
+    multiple: bool = False,
+    file_types: tuple[str, ...] = (),
+    extensions: tuple[str, ...] = (),
+) -> list[str]:
+    """Open a native or web file picker and return selected paths."""
+    if app.native.main_window:
+        files = await app.native.main_window.create_file_dialog(
+            dialog_type=_native_dialog_type("OPEN", "OPEN_DIALOG"),
+            directory=picker_start_directory(directory),
+            allow_multiple=multiple,
+            file_types=file_types,
+        )
+    else:
+        files = await LocalFilePicker(
+            directory=picker_start_directory(directory),
+            multiple=multiple,
+            file_extensions=extensions,
+        )
+    return _normalise_paths(files)
+
+
+async def pick_save_file(
+    *,
+    path: str = "",
+    save_filename: str = "",
+    file_types: tuple[str, ...] = (),
+    extensions: tuple[str, ...] = (),
+) -> list[str]:
+    """Open a save dialog, retaining a web fallback with an editable path."""
+    directory = picker_start_directory(path)
+    if app.native.main_window:
+        files = await app.native.main_window.create_file_dialog(
+            dialog_type=_native_dialog_type("SAVE", "SAVE_DIALOG"),
+            directory=directory,
+            allow_multiple=False,
+            save_filename=save_filename,
+            file_types=file_types,
+        )
+    else:
+        files = await LocalFilePicker(
+            directory=directory,
+            multiple=False,
+            file_extensions=extensions,
+        )
+    return _normalise_paths(files)
+
+
+async def pick_directory(*, directory: str = "~") -> list[str]:
+    """Open a native or web directory picker and return selected paths."""
+    if app.native.main_window:
+        files = await app.native.main_window.create_file_dialog(
+            dialog_type=_native_dialog_type("FOLDER", "FOLDER_DIALOG"),
+            directory=picker_start_directory(directory),
+            allow_multiple=False,
+        )
+    else:
+        files = await LocalFilePicker(
+            directory=picker_start_directory(directory),
+            select_directory=True,
+        )
+    return _normalise_paths(files)
 
 
 class LocalFilePicker(ui.dialog):
@@ -30,6 +123,7 @@ class LocalFilePicker(ui.dialog):
         multiple: bool = False,
         show_hidden_files: bool = False,
         select_directory: bool = False,
+        file_extensions: tuple[str, ...] = (),
     ) -> None:
         """Initialize the file picker.
 
@@ -53,6 +147,12 @@ class LocalFilePicker(ui.dialog):
             ).expanduser()
         self.show_hidden_files = show_hidden_files
         self.select_directory = select_directory
+        self.file_extensions = tuple(
+            extension.lower()
+            if extension.startswith(".")
+            else f".{extension.lower()}"
+            for extension in file_extensions
+        )
 
         with self, ui.card():
             self.add_drives_toggle()
@@ -99,6 +199,12 @@ class LocalFilePicker(ui.dialog):
         paths = list(self.path.glob("*"))
         if not self.show_hidden_files:
             paths = [p for p in paths if not p.name.startswith(".")]
+        if self.file_extensions:
+            paths = [
+                p
+                for p in paths
+                if p.is_dir() or p.suffix.lower() in self.file_extensions
+            ]
         # Sort: directories first, then alphabetical.
         paths.sort(key=lambda p: p.name.lower())
         paths.sort(key=lambda p: not p.is_dir())

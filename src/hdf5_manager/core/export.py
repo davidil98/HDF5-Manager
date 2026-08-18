@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import h5py
 import numpy as np
@@ -70,6 +70,27 @@ def _path_to_name(path: str) -> str:
     return path.strip("/").replace("/", "_") or "root"
 
 
+def _pad_column(arr: np.ndarray, target_len: int) -> np.ndarray:
+    """Pad *arr* to *target_len* using a dtype-appropriate fill value.
+
+    Float arrays are padded with ``np.nan``. Integer and boolean arrays use
+    ``pd.array`` with a nullable dtype so that the fill value is ``pd.NA``
+    instead of ``np.nan``, which cannot be stored in a NumPy integer array.
+    """
+    padding = target_len - len(arr)
+    if padding <= 0:
+        return arr
+    if np.issubdtype(arr.dtype, np.floating):
+        return np.pad(arr, (0, padding), constant_values=np.nan)
+    if np.issubdtype(arr.dtype, np.integer):
+        padded = pd.array(arr.tolist() + [pd.NA] * padding, dtype=pd.Int64Dtype())
+        return padded
+    if np.issubdtype(arr.dtype, np.bool_):
+        padded = pd.array(arr.tolist() + [pd.NA] * padding, dtype=pd.BooleanDtype())
+        return padded
+    return np.pad(arr, (0, padding), constant_values=None)
+
+
 def _build_dataframe(datasets: dict[str, np.ndarray]) -> pd.DataFrame:
     """Build a DataFrame from named datasets, padding shorter columns."""
     if not datasets:
@@ -80,24 +101,18 @@ def _build_dataframe(datasets: dict[str, np.ndarray]) -> pd.DataFrame:
         for name, arr in datasets.items()
     }
     max_len = max(len(value) for value in normalised.values())
-    data: dict[str, np.ndarray] = {}
+    data: dict[str, Any] = {}
     used_columns: set[str] = set()
 
     for name, arr in normalised.items():
         if arr.ndim == 1:
             column_name = _unique_name(name, used_columns)
-            data[column_name] = np.pad(
-                arr, (0, max_len - len(arr)), constant_values=np.nan
-            )
+            data[column_name] = _pad_column(arr, max_len)
         else:
             for col_idx in range(arr.shape[1]):
                 base_name = f"{name}[{col_idx}]" if arr.shape[1] > 1 else name
                 column_name = _unique_name(base_name, used_columns)
-                col = arr[:, col_idx]
-                padding = max_len - len(col)
-                data[column_name] = np.pad(
-                    col, (0, padding), constant_values=np.nan
-                )
+                data[column_name] = _pad_column(arr[:, col_idx], max_len)
     return pd.DataFrame(data)
 
 

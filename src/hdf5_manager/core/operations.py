@@ -10,6 +10,8 @@ from typing import Any
 
 import h5py
 
+from hdf5_manager.core.merge import order_merge_plan
+
 
 def default_output_path(source_path: str) -> str:
     """Return a default output path with ``-edit`` before the extension.
@@ -161,28 +163,32 @@ def apply_merges(
         raise ValueError("All merges must use the same destination file")
     destination_path = next(iter(destination_files))
 
-    # Validate names and existing conflicts before creating any output.
-    occupied: set[tuple[str, str]] = set()
+    # Validate source files before creating any output. Destination validation
+    # happens again against the evolving temporary file below because a merge
+    # may create the parent group of a later merge.
     with h5py.File(destination_path, "r") as destination:
-        for i, merge in enumerate(merges):
-            source_path = merge["source_path"]
-            dest_parent = merge["dest_parent"]
-            name = merge.get("name") or os.path.basename(source_path.rstrip("/"))
-            if "/" in name or not name:
-                raise ValueError(f"Merge #{i} has an invalid destination name")
+        for merge in merges:
             with h5py.File(merge["source_file"], "r") as source:
+                source_path = merge["source_path"]
                 if source_path not in source:
                     raise KeyError(source_path)
                 if not isinstance(source[source_path], h5py.Group):
                     raise ValueError(f"Only groups can be merged: {source_path}")
-            if dest_parent not in destination:
-                raise KeyError(dest_parent)
-            if not isinstance(destination[dest_parent], h5py.Group):
-                raise ValueError(f"Destination is not a group: {dest_parent}")
-            key = (dest_parent, name)
-            if name in destination[dest_parent] or key in occupied:
-                raise ValueError(f"'{name}' already exists in '{dest_parent}'")
-            occupied.add(key)
+
+        existing_paths: set[str] = {"/"}
+        existing_groups: set[str] = {"/"}
+
+        def _collect_path(_name: str, item: h5py.Dataset | h5py.Group) -> None:
+            existing_paths.add(item.name)
+            if isinstance(item, h5py.Group):
+                existing_groups.add(item.name)
+
+        destination.visititems(_collect_path)
+        ordered_merges = order_merge_plan(
+            merges,
+            existing_paths,
+            existing_groups,
+        )
 
     output_dir = os.path.dirname(os.path.abspath(output_path)) or "."
     fd, temp_path = tempfile.mkstemp(
@@ -196,18 +202,26 @@ def apply_merges(
         shutil.copy2(destination_path, temp_path)
         with h5py.File(temp_path, "r+") as destination, ExitStack() as stack:
             sources: dict[str, h5py.File] = {}
-            for merge in merges:
+            for merge in ordered_merges:
                 source_file = os.path.abspath(merge["source_file"])
                 if source_file not in sources:
                     sources[source_file] = stack.enter_context(
                         h5py.File(source_file, "r")
                     )
+                dest_parent = merge["dest_parent"]
+                if dest_parent not in destination:
+                    raise KeyError(dest_parent)
+                if not isinstance(destination[dest_parent], h5py.Group):
+                    raise ValueError(f"Destination is not a group: {dest_parent}")
+                name = merge["name"]
+                if name in destination[dest_parent]:
+                    raise ValueError(f"'{name}' already exists in '{dest_parent}'")
                 merge_files(
                     sources[source_file],
                     merge["source_path"],
                     destination,
-                    merge["dest_parent"],
-                    merge.get("name"),
+                    dest_parent,
+                    name,
                 )
 
         try:
