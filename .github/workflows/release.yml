@@ -3,7 +3,7 @@ name: Release HDF5-Manager
 on:
   push:
     tags:
-      - 'v*' # Se ejecuta automáticamente cuando subes un tag que empiece con 'v'
+      - 'v*'
 
 jobs:
   build-windows-exe:
@@ -12,74 +12,184 @@ jobs:
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
-        
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[gui]"
           pip install pyinstaller
           pip install "nicegui[pack]"
-          pip install pillow
-
-      - name: Prepare Windows icon
-        run: python scripts/prepare_windows_icon.py
 
       - name: Build EXE
-        run: nicegui-pack --onefile --name "HDF5-Manager" --icon build/icon.ico packaged_main.py
-          
+        run: nicegui-pack --onefile --name "HDF5-Manager" --icon src/hdf5_manager/icon.ico packaged_main.py
+
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
           name: hdf5-manager-windows-exe
           path: dist/HDF5-Manager.exe
 
-  publish-pypi:
-    name: Publish to PyPI
-    runs-on: ubuntu-latest
-    environment: pypi  # ¡Debe coincidir exactamente con el "Environment name" que pusiste en PyPI!
-    permissions:
-      id-token: write  # Permiso obligatorio para el Trusted Publishing de PyPI
+  build-macos-arm64:
+    name: Build macOS App (arm64)
+    runs-on: macos-latest
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
-        
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[gui]"
+          pip install pyinstaller
+          pip install "nicegui[pack]"
+
+      - name: Build App
+        run: nicegui-pack --onefile --windowed --name "HDF5-Manager" --icon src/hdf5_manager/icon.icns packaged_main.py
+
+      - name: Upload App artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdf5-manager-macos-arm64
+          path: dist/HDF5-Manager.app
+
+  build-macos-x86_64:
+    name: Build macOS App (x86_64)
+    runs-on: macos-13
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[gui]"
+          pip install pyinstaller
+          pip install "nicegui[pack]"
+
+      - name: Build App
+        run: nicegui-pack --onefile --windowed --name "HDF5-Manager" --icon src/hdf5_manager/icon.icns packaged_main.py
+
+      - name: Upload App artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdf5-manager-macos-x86_64
+          path: dist/HDF5-Manager.app
+
+  create-macos-dmg:
+    name: Create macOS Universal DMG
+    needs: [build-macos-arm64, build-macos-x86_64]
+    runs-on: macos-latest
+    steps:
+      - name: Download arm64 App
+        uses: actions/download-artifact@v4
+        with:
+          name: hdf5-manager-macos-arm64
+          path: arm64/HDF5-Manager.app
+
+      - name: Download x86_64 App
+        uses: actions/download-artifact@v4
+        with:
+          name: hdf5-manager-macos-x86_64
+          path: x86_64/HDF5-Manager.app
+
+      - name: Create universal binary
+        run: |
+          cp -R arm64/HDF5-Manager.app HDF5-Manager.app
+
+          ARM_BIN="arm64/HDF5-Manager.app/Contents/MacOS/HDF5-Manager"
+          X86_BIN="x86_64/HDF5-Manager.app/Contents/MacOS/HDF5-Manager"
+          UNIVERSAL_BIN="HDF5-Manager.app/Contents/MacOS/HDF5-Manager"
+
+          if [ -f "$ARM_BIN" ] && [ -f "$X86_BIN" ]; then
+            lipo -create "$ARM_BIN" "$X86_BIN" -output "$UNIVERSAL_BIN"
+            echo "Created universal binary for main executable"
+          fi
+
+          for framework in arm64/HDF5-Manager.app/Contents/Frameworks/*.so; do
+            if [ -f "$framework" ]; then
+              name=$(basename "$framework")
+              x86_framework="x86_64/HDF5-Manager.app/Contents/Frameworks/$name"
+              if [ -f "$x86_framework" ]; then
+                lipo -create "$framework" "$x86_framework" -output "HDF5-Manager.app/Contents/Frameworks/$name"
+              fi
+            fi
+          done
+
+      - name: Create DMG
+        run: |
+          hdiutil create -volname "HDF5-Manager" -srcfolder HDF5-Manager.app -ov -format UDZO dist/HDF5-Manager.dmg
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdf5-manager-macos-dmg
+          path: dist/HDF5-Manager.dmg
+
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
       - name: Install build tools
         run: python -m pip install build
-        
+
       - name: Build package (sdist and wheel)
         run: python -m build
-        
+
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
   create-github-release:
     name: Create GitHub Release
-    needs: [build-windows-exe, publish-pypi] # Espera a que los dos trabajos anteriores terminen con éxito
+    needs: [build-windows-exe, create-macos-dmg, publish-pypi]
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Permiso necesario para crear el Release en GitHub
+      contents: write
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
-        
-      - name: Download EXE artifact
+
+      - name: Download Windows EXE artifact
         uses: actions/download-artifact@v4
         with:
           name: hdf5-manager-windows-exe
           path: ./dist
-          
+
+      - name: Download macOS DMG artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hdf5-manager-macos-dmg
+          path: ./dist
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ./dist/HDF5-Manager.exe
+          files: |
+            ./dist/HDF5-Manager.exe
+            ./dist/HDF5-Manager.dmg
           generate_release_notes: true

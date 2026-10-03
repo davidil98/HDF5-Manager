@@ -79,10 +79,14 @@ Linux/macOS users with conda can use:
 
 The `run.sh` launcher uses the same native-first production profile.
 
-Or build a standalone `.exe` for distribution:
+Or build a standalone executable for distribution:
 
 ```bash
-nicegui-pack --onefile --name "HDF5-Manager" packaged_main.py
+# Windows
+nicegui-pack --onefile --name "HDF5-Manager" --icon src/hdf5_manager/icon.ico packaged_main.py
+
+# macOS
+nicegui-pack --onefile --windowed --name "HDF5-Manager" --icon src/hdf5_manager/icon.icns packaged_main.py
 ```
 
 The executable uses the same production launcher as `hdf5-manager` and always
@@ -116,15 +120,21 @@ from core, never the reverse.
 |----------------------|-----------------------------|--------|--------|
 | `python main.py`     | `main.py`                   | True   | Configurable |
 | `hdf5-manager`       | `src/hdf5_manager/__init__.py` | False  | Auto |
-| `.exe`               | `packaged_main.py`          | False  | Auto |
+| `.exe` / `.app`      | `packaged_main.py`          | False  | Auto |
 | `run.bat` / `run.sh` | (production launchers)      | False  | Auto |
 
 ## Distribution
 
 - **PyPI** — `pip install hdf5-manager`
 - **conda** — `conda env create -f environment.yml`
-- **Windows .exe** — `nicegui-pack --onefile --name "HDF5-Manager" main.py`
-- **GitHub Releases** — Pre-built .exe attached to each release
+- **Windows .exe** — Pre-built executable attached to each GitHub Release
+- **macOS .dmg** — Pre-built universal app (arm64 + x86_64) attached to each GitHub Release
+- **GitHub Releases** — [Releases page](https://github.com/davidil98/HDF5-Manager/releases)
+
+> **Note:** The distributed binaries are not code-signed. On first launch,
+> macOS Gatekeeper or Windows SmartScreen may show a warning. On macOS,
+> right-click the app and select **Open** (or ctrl+click > Open). On Windows,
+> click **More info** > **Run anyway**.
 
 ## License
 
