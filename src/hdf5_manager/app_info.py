@@ -16,7 +16,7 @@ LICENSE_NAME = "MIT"
 REPOSITORY_URL = "https://github.com/davidil98/HDF5-Manager"
 # Institutional contact address shown in the About dialog. Leave empty to
 # hide the contact row.
-CONTACT_EMAIL = ""
+CONTACT_EMAIL = "dibarra@icmab.es"
 
 
 def app_version() -> str:
