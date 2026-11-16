@@ -132,9 +132,11 @@ def _build_source_panel() -> None:
             icon="add",
             on_click=_queue_selected_merges,
         ).props("dense color=primary")
-        ui.button("Select root groups", icon="select_all", on_click=_select_all_sources).props(
-            "flat dense"
-        )
+        ui.button(
+            "Select root groups",
+            icon="select_all",
+            on_click=_select_all_sources,
+        ).props("flat dense")
         ui.button("Clear", icon="clear_all", on_click=_clear_sources).props(
             "flat dense"
         )
@@ -175,13 +177,15 @@ def _build_source_panel() -> None:
     if selected:
         with ui.row().classes("w-full gap-1 flex-wrap mt-2"):
             for path in selected:
+
+                def _on_chip_remove(_event: object, group_path: str = path) -> None:
+                    _remove_source_selection(group_path)
+
                 ui.chip(
                     path,
                     icon="folder",
                     removable=True,
-                    on_value_change=lambda _event, group_path=path: _remove_source_selection(
-                        group_path
-                    ),
+                    on_value_change=_on_chip_remove,
                 )
 
 

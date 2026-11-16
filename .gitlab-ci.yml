@@ -1,0 +1,65 @@
+# GitLab CI for the CSIC mirror of HDF5-Manager.
+#
+# This pipeline never compiles binaries: the .exe and .dmg are built by
+# GitHub Actions (see .github/workflows/release.yml) because GitLab's
+# shared runners are Linux-only and PyInstaller cannot cross-compile.
+# The release job only publishes a GitLab Release whose asset links point
+# to the binaries attached to the GitHub Release of the same tag.
+
+stages:
+  - test
+  - release
+
+variables:
+  GITHUB_RELEASES_URL: "https://github.com/davidil98/HDF5-Manager/releases"
+
+test:
+  stage: test
+  image: python:3.10-slim
+  interruptible: true
+  # Tag pipelines only publish the release; do not block it on lint/tests.
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_TAG == null
+  script:
+    - pip install ".[dev]"
+    - ruff check src/ tests/
+    - pytest -q
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  interruptible: false
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  script:
+    - command -v curl >/dev/null 2>&1 || apk add --no-cache curl
+    # GitHub may still be compiling when the tag lands here. Wait a bounded
+    # amount of time so the Release does not ship dead links.
+    - |
+      base="${GITHUB_RELEASES_URL}/download/${CI_COMMIT_TAG}"
+      for asset in HDF5-Manager.exe HDF5-Manager-arm64.dmg HDF5-Manager-x86_64.dmg; do
+        if curl -fsSIL --retry 8 --retry-delay 15 --retry-all-errors "${base}/${asset}" > /dev/null; then
+          echo "available: ${asset}"
+        else
+          echo "WARNING: ${asset} is not published on GitHub for ${CI_COMMIT_TAG}"
+        fi
+      done
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "HDF5-Manager $CI_COMMIT_TAG"
+    description: |
+      Binaries are compiled and signed (ad-hoc on macOS) by GitHub Actions.
+
+      The `.exe` and `.dmg` files below are attached to the GitHub Release of
+      this same tag; they are linked here so the group repository stays a
+      single entry point for users.
+    assets:
+      links:
+        - name: "Windows executable (.exe)"
+          url: "https://github.com/davidil98/HDF5-Manager/releases/download/$CI_COMMIT_TAG/HDF5-Manager.exe"
+        - name: "macOS Apple Silicon (.dmg)"
+          url: "https://github.com/davidil98/HDF5-Manager/releases/download/$CI_COMMIT_TAG/HDF5-Manager-arm64.dmg"
+        - name: "macOS Intel (.dmg)"
+          url: "https://github.com/davidil98/HDF5-Manager/releases/download/$CI_COMMIT_TAG/HDF5-Manager-x86_64.dmg"
+        - name: "All downloads and release notes (GitHub)"
+          url: "https://github.com/davidil98/HDF5-Manager/releases/tag/$CI_COMMIT_TAG"

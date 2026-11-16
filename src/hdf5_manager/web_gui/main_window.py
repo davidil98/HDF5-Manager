@@ -5,6 +5,7 @@ from pathlib import Path
 from nicegui import app, ui
 
 from hdf5_manager.core.operations import default_output_path
+from hdf5_manager.web_gui.about import open_about_dialog
 from hdf5_manager.web_gui.editor import create_editor_tab
 from hdf5_manager.web_gui.exporter import create_exporter_tab
 from hdf5_manager.web_gui.general import pick_file
@@ -68,6 +69,8 @@ def _build_toolbar() -> None:
         ui.label().bind_text_from(app.storage.user, "h5_path").classes(
             "text-grey text-sm truncate"
         )
+        ui.space()
+        ui.button("About", icon="info", on_click=open_about_dialog).props("flat")
 
 
 def _build_tabs() -> None:

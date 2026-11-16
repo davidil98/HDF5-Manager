@@ -13,6 +13,8 @@ from hdf5_manager.core.export import ExportMode, export_csv, export_xlsx
 from hdf5_manager.core.tree import build_tree
 from hdf5_manager.web_gui.general import (
     pick_directory,
+)
+from hdf5_manager.web_gui.general import (
     picker_start_directory as _picker_start_directory,
 )
 
@@ -336,7 +338,7 @@ def _available_layout_options(output_format: str) -> dict[ExportMode, str]:
 async def _pick_output_directory() -> None:
     """Open the shared native/web directory picker for export output."""
     current = app.storage.user.get("export_output_dir", "")
-    paths = await pick_directory(directory=picker_start_directory(current))
+    paths = await pick_directory(directory=_picker_start_directory(current))
 
     if paths:
         app.storage.user["export_output_dir"] = str(paths[0])

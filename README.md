@@ -127,14 +127,25 @@ from core, never the reverse.
 
 - **PyPI** — `pip install hdf5-manager`
 - **conda** — `conda env create -f environment.yml`
-- **Windows .exe** — Pre-built executable attached to each GitHub Release
-- **macOS .dmg** — Pre-built universal app (arm64 + x86_64) attached to each GitHub Release
+- **Windows `.exe`** — Pre-built executable attached to each GitHub Release
+- **macOS `.dmg`** — Two architecture-specific builds per release:
+  - `HDF5-Manager-arm64.dmg` — Apple Silicon (M1/M2/M3/M4)
+  - `HDF5-Manager-x86_64.dmg` — Intel Macs
 - **GitHub Releases** — [Releases page](https://github.com/davidil98/HDF5-Manager/releases)
+- **GitLab (CSIC, Nanomol group)** — [mirror of this repository](https://git.csic.es/nanomol/HDF5-Manager).
+  Its releases link to the binaries published on GitHub.
 
-> **Note:** The distributed binaries are not code-signed. On first launch,
-> macOS Gatekeeper or Windows SmartScreen may show a warning. On macOS,
-> right-click the app and select **Open** (or ctrl+click > Open). On Windows,
-> click **More info** > **Run anyway**.
+> **Note:** Binaries are not signed with a paid certificate. The macOS app is
+> ad-hoc signed (which is what keeps it from being reported as *damaged*), but
+> Gatekeeper still warns because it is not notarized. On macOS 15 and later,
+> open **System Settings › Privacy & Security** and choose **Open Anyway**
+> after the first launch attempt (right-click › Open no longer bypasses this).
+> On Windows, SmartScreen may warn on first run: **More info › Run anyway**.
+> Installing from PyPI or conda avoids both prompts entirely.
+
+## Contact
+
+Bugs and feature requests: [GitHub issues](https://github.com/davidil98/HDF5-Manager/issues).
 
 ## License
 

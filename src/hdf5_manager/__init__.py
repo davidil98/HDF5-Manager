@@ -4,7 +4,7 @@ Built with NiceGUI for standalone use, with a framework-agnostic core
 reusable in PyQt5.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.6"
 
 
 def main() -> None:
